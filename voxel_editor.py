@@ -382,11 +382,9 @@ class Block:
             p1, p2 = tuple(self.block.verts[index] for index in edge)
             #print(p1,p2)
             p1, p2 = camera.project(p1), camera.project(p2)
-            if p1 and p2:
-                p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
-                p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
-                pygame.draw.line(screen, "white", p1, p2)
-        select_cube = get_cube((self.select[0]+0.5,self.select[1]+0.5,self.select[2]+0.5))
+            p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+            p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+            pygame.draw.line(screen, "white", p1, p2)
         to_draw = []
         for i,j,k in self.polys:
             cube = self.polys[(i,j,k)]
@@ -400,17 +398,45 @@ class Block:
                     triangle = [camera.project(x) for x in triangle]
                     triangle = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in triangle]
                     color = tuple(255*self.illumination_map[(i,j,k)][face_index]*100 for l in range(3))
-                    to_draw.append((distance,color,triangle))
+                    color = "white"
+                    to_draw.append(((distance, pygame.draw.polygon, (color,triangle))))
+        for i,j,k in self.polys:
+            cube = self.polys[(i,j,k)]
+            for edge in cube.edges:
+                p1, p2 = tuple(cube.verts[index] for index in edge)
+                centroid = ((p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2)
+                distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
+                #print(p1,p2)
+                p1, p2 = camera.project(p1), camera.project(p2)
+                p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                to_draw.append(((distance, pygame.draw.line, ("black", p1, p2))))
+                pygame.draw.line(screen, "black", p1, p2)
         to_draw = sorted(to_draw, reverse=True)
-        for distance, color, triangle in to_draw:
-            pygame.draw.polygon(screen, color, triangle)
+        for distance, func, args in to_draw:
+            func(screen, *args)
+        width, height, depth = self.size
+        if self.select[3] == 0:
+            axes = get_cube((width/2,0.5+self.select[1],depth/2), factors=(width,1,depth))
+        elif self.select[3] == 1:
+            axes = get_cube((width/2,height/2,0.5+self.select[2]), factors=(width,height,1))
+        elif self.select[3] == 2:
+            axes = get_cube((0.5+self.select[0],height/2,depth/2), factors=(1,height,depth))
+        for edge in axes.edges:
+            p1, p2 = tuple(axes.verts[index] for index in edge)
+            p1, p2 = camera.project(p1), camera.project(p2)
+            if p1 and p2:
+                p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                pygame.draw.line(screen, "white", p1, p2)
+        select_cube = get_cube((self.select[0]+0.5,self.select[1]+0.5,self.select[2]+0.5))
         for edge in select_cube.edges:
             p1, p2 = tuple(select_cube.verts[index] for index in edge)
             p1, p2 = camera.project(p1), camera.project(p2)
             if p1 and p2:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
-                pygame.draw.line(screen, "white", p1, p2)
+                pygame.draw.line(screen, (128,128,128), p1, p2)
 
     def ray_process(cube, position, direction):
         return cube.ray(position,direction)
@@ -499,6 +525,10 @@ if __name__ == "__main__":
                     camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (pi/180*10,0,0))
                 if event.key == pygame.K_s:
                     camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (-pi/180*10,0,0))
+                if event.key == pygame.K_q:
+                    camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (0,0,-pi/180*10))
+                if event.key == pygame.K_e:
+                    camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (0,0,pi/180*10))
                 if event.key == pygame.K_l:
                     if block.select[0] < block.size[0]-1:
                         block.select[0] += 1
@@ -524,14 +554,49 @@ if __name__ == "__main__":
                         block.select[2] -= 1
                     block.select[3] = 2
                 if event.key == pygame.K_UP:
-                    camera.zoom *= 1.1
+                    if block.select[3] == 0 and block.select[2] < block.size[2]-1:
+                        block.select[2] += 1
+                    elif block.select[3] == 1 and block.select[1] < block.size[1]-1:
+                        block.select[1] += 1
+                    elif block.select[3] == 2 and block.select[1] < block.size[1]-1:
+                        block.select[1] += 1
                 if event.key == pygame.K_DOWN:
+                    if block.select[3] == 0 and block.select[2] > 0:
+                        block.select[2] -= 1
+                    elif block.select[3] == 1 and block.select[1] > 0:
+                        block.select[1] -= 1
+                    elif block.select[3] == 2 and block.select[1] > 0:
+                        block.select[1] -= 1
+                if event.key == pygame.K_LEFT:
+                    if block.select[3] == 0 and block.select[0] > 0:
+                        block.select[0] -= 1
+                    elif block.select[3] == 1 and block.select[0] > 0:
+                        block.select[0] -= 1
+                    elif block.select[3] == 2 and block.select[2] < block.size[2]-1:
+                        block.select[2] += 1
+                if event.key == pygame.K_RIGHT:
+                    if block.select[3] == 0 and block.select[0] < block.size[0]-1:
+                        block.select[0] += 1
+                    elif block.select[3] == 1 and block.select[0] < block.size[0]-1:
+                        block.select[0] += 1
+                    elif block.select[3] == 2 and block.select[2] > 0:
+                        block.select[2] -= 1
+                if event.key == pygame.K_LSHIFT:
+                    block.select[3] = (block.select[3]-1)%3
+                if event.key == pygame.K_RSHIFT:
+                    block.select[3] = (block.select[3]+1)%3
+                if event.key == pygame.K_z:
+                    camera.zoom *= 1.1
+                if event.key == pygame.K_x:
                     camera.zoom /= 1.1
                 if event.key == pygame.K_SPACE:
-                    block.polys[tuple(block.select[:3])] = get_cube((block.select[0]+0.5,block.select[1]+0.5,block.select[2]+0.5))
-                    for i,j,k in block.polys:
-                        for face_index,face in enumerate(block.polys[(i,j,k)].faces):
-                            light_input_queue.put((block.illuminate, (light, (i,j,k), face_index)), block=False)
+                    if tuple(block.select[:3]) in block.polys:
+                        del block.polys[tuple(block.select[:3])]
+                    else:
+                        block.polys[tuple(block.select[:3])] = get_cube((block.select[0]+0.5,block.select[1]+0.5,block.select[2]+0.5))
+                    #for i,j,k in block.polys:
+                    #    for face_index,face in enumerate(block.polys[(i,j,k)].faces):
+                    #        light_input_queue.put((block.illuminate, (light, (i,j,k), face_index)), block=False)
             if event.type == pygame.MOUSEMOTION:
                 x,y = pygame.mouse.get_pos()
                 x -= screen_width/2
@@ -587,5 +652,6 @@ if __name__ == "__main__":
             pygame.draw.polygon(screen, light_dict[key], triangle)
         pygame.display.flip()
         dT = clock.tick(60) / 1000
+        print(dT, len(block.polys))
     light_process.kill()
     pygame.quit()
