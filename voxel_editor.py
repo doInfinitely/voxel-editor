@@ -7,8 +7,10 @@ import multiprocessing as mp
 import queue
 from PIL import Image
 from scipy.optimize import fsolve
+from scipy.spatial import ConvexHull
 import warnings
 warnings.simplefilter("ignore")
+import matplotlib.pyplot as plt
 
 def shift(points, displacement=(0,0,0)):
     output = []
@@ -390,16 +392,14 @@ class Block:
             cube = self.polys[(i,j,k)]
             if (i,j,k) not in self.illumination_map:
                 self.illumination_map[(i,j,k)] = {face_index:0 for face_index,face in enumerate(cube.faces)}
-            for face_index,face in enumerate(cube.faces):
-                for triangle in Polyhedron.triangulation(cube.circuit(face_index)):
-                    triangle = list(triangle)
-                    centroid = tuple(sum(triangle[i][j] for i in range(3))/3 for j in range(3))
-                    distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
-                    triangle = [camera.project(x) for x in triangle]
-                    triangle = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in triangle]
-                    color = tuple(255*self.illumination_map[(i,j,k)][face_index]*100 for l in range(3))
-                    color = "white"
-                    to_draw.append(((distance, pygame.draw.polygon, (color,triangle))))
+            centroid = tuple(sum(cube.verts[i][j] for i in range(8))/8 for j in range(3))
+            distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
+            cube = [camera.project(x) for x in cube.verts]
+            cube = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in cube]
+            cube = np.array(cube)
+            hull = ConvexHull(cube)
+            color = "white"
+            to_draw.append(((distance, pygame.draw.polygon, (color,cube[hull.vertices].tolist()))))
         for i,j,k in self.polys:
             cube = self.polys[(i,j,k)]
             for edge in cube.edges:
@@ -437,6 +437,19 @@ class Block:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, (128,128,128), p1, p2)
+    def contiguous(self):
+        output = {(i,j,k):frozenset([(i,j,k)]) for (i,j,k) in self.polys}
+        for i,j,k in output:
+            for delta in [(1,0,0),(0,1,0),(0,0,1)]:
+                other = (i+delta[0],j+delta[1],k+delta[2])
+                if other in output:
+                    output[(i,j,k)] |= output[other]
+                    output[other] = output[(i,j,k)]
+                other = (i-delta[0],j-delta[1],k-delta[2])
+                if other in output:
+                    output[(i,j,k)] |= output[other]
+                    output[other] = output[(i,j,k)]
+        return set(output.values())
 
     def ray_process(cube, position, direction):
         return cube.ray(position,direction)
@@ -512,7 +525,21 @@ if __name__ == "__main__":
     block = Block(100,100,100)
     #block = Block(5,5,5)
     #block.block[1][4][2] = 1
+    dts = []
+    count = 0
     while running:
+        '''
+        i,j,k = (random.randrange(block.size[i]) for i in range(3))
+        while (i,j,k) in block.polys:
+            i,j,k = (random.randrange(block.size[i]) for i in range(3))
+        '''
+        width, height, depth = block.size
+        i = count//height//depth%width
+        j = count//depth%height
+        k = count%depth
+        block.polys[(i,j,k)] = get_cube((i+0.5,j+0.5,k+0.5))
+        count += 1
+        print(block.contiguous())
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -653,5 +680,9 @@ if __name__ == "__main__":
         pygame.display.flip()
         dT = clock.tick(60) / 1000
         print(dT, len(block.polys))
+        dts.append(dT)
     light_process.kill()
+    plt.plot(dts)
+    plt.ylabel('time deltas')
+    plt.show()
     pygame.quit()
