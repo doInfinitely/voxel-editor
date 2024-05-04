@@ -11,6 +11,7 @@ from scipy.spatial import ConvexHull
 import warnings
 warnings.simplefilter("ignore")
 import matplotlib.pyplot as plt
+import operator
 
 def shift(points, displacement=(0,0,0)):
     output = []
@@ -102,6 +103,16 @@ class Polyhedron:
         self.edges = set()
         self.faces = set()
     # return sequential points on the face
+    def colinear(points):
+        if len(points) < 3:
+            return True
+        for p in points[2:]:
+            a = np.array([[points[1][i]-points[0][i]] for i in range(3)])
+            b = np.array([p[i]-points[0][i] for i in range(3)])
+            x, res, rank, s = np.linalg.lstsq(a, b)
+            if not np.allclose(np.dot(a, x), b, atol=0.1):
+                return False
+        return True
     def coplanar(points):
         if len(points) < 4:
             return True
@@ -114,9 +125,23 @@ class Polyhedron:
             if not len(solve(eqs)):
                 return False
         '''
-        for p in points[3:]:
-            a = np.array([[points[1][i]-points[0][i],points[2][i]-points[0][i]] for i in range(3)])
-            b = np.array([p[i]-points[0][i] for i in range(3)])
+        triple_break = False
+        for i,x in enumerate(points):
+            for j,y in enumerate(points):
+                for k,z in enumerate(points):
+                    if i != j and i != k and j != k and not Polyhedron.colinear([x,y,z]):
+                        ind = [i,j,k]
+                        triple_break = True
+                        break
+                if triple_break:
+                    break
+            if triple_break:
+                break
+        for index,p in enumerate(points):
+            if index in ind:
+                continue
+            a = np.array([[points[ind[1]][i]-points[ind[0]][i],points[ind[2]][i]-points[ind[0]][i]] for i in range(3)])
+            b = np.array([p[i]-points[ind[0]][i] for i in range(3)])
             x, res, rank, s = np.linalg.lstsq(a, b)
             #print(a, b, x, res)
             if not np.allclose(np.dot(a, x), b, atol=0.1):
@@ -162,6 +187,7 @@ class Polyhedron:
             edge = self.edges[edge_index]
             for index in self.edges[edge_index]:
                 point = self.verts[index]
+                #print(point, edge)
                 if point not in edge_lookup:
                     edge_lookup[point] = set()
                 edge_lookup[point].add(edge)
@@ -169,12 +195,22 @@ class Polyhedron:
         previous = start
         point = self.verts[list(start)[0]]
         circuit.append(point)
-        current = list(edge_lookup[point] - set([start]))[0]
+        #print([[self.verts[index] for index in self.edges[edge_index]] for edge_index in face])
+        try:
+            current = list(edge_lookup[point] - set([start]))[0]
+        except IndexError:
+            return []
+        #print([[self.verts[index] for index in edge] for edge in self.edges])
         while current != start:
             point = self.verts[list(current - previous)[0]]
             circuit.append(point)
             previous = current
-            current = list(edge_lookup[point] - set([current]))[0]
+            #print(point, [[self.verts[index] for index in edge] for edge in edge_lookup[point]])
+            #print('circuit', circuit)
+            try:
+                current = list(edge_lookup[point] - set([current]))[0]
+            except IndexError:
+                return []
         return circuit
     # returns any edge that intersects the line segment between p1 and p2
     def intersect(self, p1, p2):
@@ -342,6 +378,192 @@ class Polyhedron:
                     output.append((gamma, point, face_index))
                     break
         return sorted(output)
+    def merge(self, other):
+        edges1 = [frozenset([self.verts[index] for index in edge]) for edge in self.edges]
+        edges2 = [frozenset([other.verts[index] for index in edge]) for edge in other.edges]
+        faces1 = set([frozenset([edges1[index] for index in face]) for face in self.faces])
+        faces2 = set([frozenset([edges2[index] for index in face]) for face in other.faces])
+        edges1 = set(edges1)
+        edges2 = set(edges2)
+        faces_to_remove = faces1 & faces2
+        edges_to_remove = set()
+        for face in faces_to_remove:
+            edges_to_remove.update(face)
+        new_edges = set()
+        new_faces = set()
+        for e1 in edges1:
+            for e2 in edges2:
+                if e1 == e2:
+                    edges_to_remove.add(e1)
+                    temp = []
+                elif len(e1&e2) and Polyhedron.colinear(list(e1|e2)):
+                    edges_to_remove.add(e1)
+                    edges_to_remove.add(e2)
+                    new_edges.add(e1^e2)
+                elif Polyhedron.colinear(list(e1|e2)):
+                    e1 = sorted(tuple(e1))
+                    e2 = sorted(tuple(e2))
+                    interior_points = set()
+                    for index,p in enumerate(e1):
+                        a = np.array([[e2[1][i]-e2[0][i]] for i in range(3)])
+                        b = np.array([p[i]-e2[0][i] for i in range(3)])
+                        x, res, rank, s = np.linalg.lstsq(a, b)
+                        if x[0] >= 0 and x[0] <= 1:
+                            interior_points.add(p)
+                    for index,p in enumerate(e2):
+                        a = np.array([[e1[1][i]-e1[0][i]] for i in range(3)])
+                        b = np.array([p[i]-e1[0][i] for i in range(3)])
+                        x, res, rank, s = np.linalg.lstsq(a, b)
+                        if x[0] >= 0 and x[0] <= 1:
+                            interior_points.add(p)
+                    if not len(set(e1)-interior_points):
+                        edges_to_remove.add(frozenset(e1))
+                        edges_to_remove.add(frozenset(e2))
+                        '''
+                        for face in faces1|faces2:
+                            if frozenset(e1) in face or frozenset(e2) in face:
+                                faces_to_remove.add(face)
+                        '''
+                        new_edges.add(frozenset([e2[0],e1[0]]))
+                        new_edges.add(frozenset([e1[1],e2[1]]))
+                    if not len(set(e2)-interior_points):
+                        edges_to_remove.add(frozenset(e1))
+                        edges_to_remove.add(frozenset(e2))
+                        '''
+                        for face in faces1|faces2:
+                            if frozenset(e1) in face or frozenset(e2) in face:
+                                faces_to_remove.add(face)
+                        '''
+                        new_edges.add(frozenset([e1[0],e2[0]]))
+                        new_edges.add(frozenset([e2[1],e1[1]]))
+                    e1 = frozenset(e1)
+
+
+        for f1 in faces1:
+            for f2 in faces2:
+                if f1 == f2:
+                    faces_to_remove.add(f1)
+                    edges_to_remove.update(f1)
+                elif Polyhedron.coplanar(list({point for edge in f1 for point in edge}|{point for edge in f2 for point in edge})):
+                    cont = True
+                    for e1 in f1:
+                        for e2 in f2:
+                            e1 = tuple(e1)
+                            e2 = tuple(e2)
+                            interior_points = set()
+                            for index,p in enumerate(e1):
+                                a = np.array([[e2[1][i]-e2[0][i]] for i in range(3)])
+                                b = np.array([p[i]-e2[0][i] for i in range(3)])
+                                x, res, rank, s = np.linalg.lstsq(a, b)
+                                if x[0] >= 0 and x[0] <= 1 and np.allclose(np.dot(a, x), b, atol=0.1):
+                                    interior_points.add(p)
+                            for index,p in enumerate(e2):
+                                a = np.array([[e1[1][i]-e1[0][i]] for i in range(3)])
+                                b = np.array([p[i]-e1[0][i] for i in range(3)])
+                                x, res, rank, s = np.linalg.lstsq(a, b)
+                                if x[0] >= 0 and x[0] <= 1 and np.allclose(np.dot(a, x), b, atol=0.1):
+                                    interior_points.add(p)
+                            if len(interior_points):
+                                #print('interior', interior_points)
+                                cont = False
+                    if cont:
+                        continue
+                    edges_to_remove.update(f1&f2)
+                    faces_to_remove.add(f1)
+                    faces_to_remove.add(f2)
+                    f3 = f1 ^ f2
+                    for e1 in f1:
+                        for e2 in f2:
+                            if len(e1&e2) == 1 and Polyhedron.colinear(list(e1|e2)):
+                                f3 |= frozenset([e1^e2])
+                                f3 -= frozenset([e1,e2])
+                    for e1 in f3 & edges_to_remove:
+                        for e2 in new_edges:
+                            if len(e1&e2) == 1 and Polyhedron.colinear(list(e1|e2)):
+                                f3 |= frozenset([e2])
+                    f3 = f3 - edges_to_remove
+                    visited = set()
+                    try:
+                        current = list(f3)[0]
+                    except IndexError:
+                        continue
+                    while True:
+                        visited.add(current)
+                        for edge in f3:
+                            if len(current&edge) == 1 and edge not in visited:
+                                current = edge
+                                break
+                        else:
+                            break
+                    if len(visited) != len(f3):
+                        #print(f1, f2)
+                        #print(f1&f2)
+                        #print(store)
+                        new_faces.add(frozenset(visited))
+                        new_faces.add(frozenset(f3-visited))
+                    else:
+                        new_faces.add(f3)
+        temp = list(new_edges) 
+        for e1 in temp:
+            for e2 in temp:
+                if e1 != e2 and Polyhedron.colinear(list(e1|e2)):
+                    e1 = tuple(e1)
+                    e2 = tuple(e2)
+                    interior_points = set()
+                    for index,p in enumerate(e1):
+                        a = np.array([[e2[1][i]-e2[0][i]] for i in range(3)])
+                        b = np.array([p[i]-e2[0][i] for i in range(3)])
+                        x, res, rank, s = np.linalg.lstsq(a, b)
+                        if x[0] >= 0 and x[0] <= 1:
+                            interior_points.add(p)
+                    for index,p in enumerate(e2):
+                        a = np.array([[e1[1][i]-e1[0][i]] for i in range(3)])
+                        b = np.array([p[i]-e1[0][i] for i in range(3)])
+                        x, res, rank, s = np.linalg.lstsq(a, b)
+                        if x[0] >= 0 and x[0] <= 1:
+                            interior_points.add(p)
+                    if len(interior_points):
+                        e1 = frozenset(e1)
+                        e2 = frozenset(e2)
+                        try:
+                            new_edges.remove(e1)
+                        except KeyError:
+                            pass
+                        try:
+                            new_edges.remove(e2)
+                        except KeyError:
+                            pass
+                        e3 = (e1|e2)-interior_points
+                        #print(e1,e2,e3,interior_points)
+                        new_edges.add(e3)
+                        new_faces = list(new_faces)
+                        for i in range(len(new_faces)):
+                            if e1 in new_faces[i]:
+                                new_faces[i] = new_faces[i] - frozenset([e1])
+                                new_faces[i] = new_faces[i]|frozenset([e3])
+                            if e2 in new_faces[i]:
+                                new_faces[i] = new_faces[i] - frozenset([e2])
+                                new_faces[i] = new_faces[i]|frozenset([e3])
+                        new_faces = set(new_faces)
+                    e1 = frozenset(e1)
+
+        
+
+        #print('faces to remove/faces 2', faces2&faces_to_remove)
+        edges = list((edges1|edges2|new_edges)-edges_to_remove)
+        verts = list(set(self.verts)^set(other.verts))
+        faces = (faces1|faces2|new_faces)-faces_to_remove
+        faces = [frozenset([edges.index(edge) for edge in face]) for face in faces]
+        edges = [frozenset([verts.index(point) for point in edge]) for edge in edges]
+        #print(verts)
+        #print(edges)
+        #print(faces)
+        #polyhedron = Polyhedron()
+        self.verts = verts
+        self.edges = edges
+        self.faces = faces
+        #return polyhedron
+        #sys.exit()
 
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
@@ -376,7 +598,9 @@ class Block:
         self.size = (width,height,depth)
         self.block = get_cube((width/2,height/2,depth/2),factors=(width,height,depth))
         self.illumination_map = dict()
+        self.contig = dict()
         self.polys = dict()
+        self.unique = []
         self.select = [0,0,0,0]
     def draw(self, pygame, screen):
         screen_width, screen_height = screen.get_size()
@@ -388,20 +612,26 @@ class Block:
             p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
             pygame.draw.line(screen, "white", p1, p2)
         to_draw = []
-        for i,j,k in self.polys:
-            cube = self.polys[(i,j,k)]
-            if (i,j,k) not in self.illumination_map:
-                self.illumination_map[(i,j,k)] = {face_index:0 for face_index,face in enumerate(cube.faces)}
-            centroid = tuple(sum(cube.verts[i][j] for i in range(8))/8 for j in range(3))
-            distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
-            cube = [camera.project(x) for x in cube.verts]
-            cube = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in cube]
-            cube = np.array(cube)
-            hull = ConvexHull(cube)
-            color = "white"
-            to_draw.append(((distance, pygame.draw.polygon, (color,cube[hull.vertices].tolist()))))
-        for i,j,k in self.polys:
-            cube = self.polys[(i,j,k)]
+        for poly in set(self.polys.values()):
+            #cube = self.polys[(i,j,k)]
+            for face_index,face in enumerate(poly.faces):
+                points = poly.circuit(face_index)
+                #print(points)
+                if not len(points):
+                    continue
+                centroid = tuple(sum(points[i][j] for i,x in enumerate(points))/len(points) for j in range(3))
+                distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
+                points = [camera.project(x) for x in points]
+                points = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in points]
+                #points = np.array(points)
+                #hull = ConvexHull(points)
+                color = "white"
+                to_draw.append(((distance, pygame.draw.polygon, (color,points))))
+        to_draw = sorted(to_draw, reverse=True, key=operator.itemgetter(0))
+        for distance, func, args in to_draw:
+            func(screen, *args)
+        for cube in set(self.polys.values()):
+            #cube = self.polys[(i,j,k)]
             for edge in cube.edges:
                 p1, p2 = tuple(cube.verts[index] for index in edge)
                 centroid = ((p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2)
@@ -410,11 +640,8 @@ class Block:
                 p1, p2 = camera.project(p1), camera.project(p2)
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
-                to_draw.append(((distance, pygame.draw.line, ("black", p1, p2))))
+                #to_draw.append(((distance, pygame.draw.line, ("black", p1, p2))))
                 pygame.draw.line(screen, "black", p1, p2)
-        to_draw = sorted(to_draw, reverse=True)
-        for distance, func, args in to_draw:
-            func(screen, *args)
         width, height, depth = self.size
         if self.select[3] == 0:
             axes = get_cube((width/2,0.5+self.select[1],depth/2), factors=(width,1,depth))
@@ -437,6 +664,38 @@ class Block:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, (128,128,128), p1, p2)
+    def add_poly(self,i,j,k):
+        self.polys[(i,j,k)] = get_cube((i+0.5,j+0.5,k+0.5))
+        others = set()
+        self.contig[(i,j,k)] = {(i,j,k)}
+        for delta in [(1,0,0),(0,1,0),(0,0,1)]:
+            other = (i+delta[0],j+delta[1],k+delta[2])
+            if other in self.polys and self.polys[(i,j,k)] != self.polys[other]:
+                self.polys[other].merge(self.polys[(i,j,k)])
+                self.polys[(i,j,k)] = self.polys[other]
+                others.add(other)
+                self.contig[other].update(self.contig[(i,j,k)])
+                self.contig[(i,j,k)] = self.contig[other]
+                for other in others:
+                    self.polys[other] = self.polys[(i,j,k)]
+                    for other2 in self.contig[other]:
+                        self.polys[other2] = self.polys[(i,j,k)]
+            other = (i-delta[0],j-delta[1],k-delta[2])
+            if other in self.polys and self.polys[(i,j,k)] != self.polys[other]:
+                self.polys[other].merge(self.polys[(i,j,k)])
+                self.polys[(i,j,k)] = self.polys[other]
+                others.add(other)
+                self.contig[other].update(self.contig[(i,j,k)])
+                self.contig[(i,j,k)] = self.contig[other]
+                for other in others:
+                    self.polys[other] = self.polys[(i,j,k)]
+                    for other2 in self.contig[other]:
+                        self.polys[other2] = self.polys[(i,j,k)]
+        #else:
+        #    self.unique.append(self.polys[(i,j,k)])
+            #self.contig[(i,j,k)] = set([(i,j,k)])
+            
+
     def contiguous(self):
         output = {(i,j,k):frozenset([(i,j,k)]) for (i,j,k) in self.polys}
         for i,j,k in output:
@@ -527,19 +786,33 @@ if __name__ == "__main__":
     #block.block[1][4][2] = 1
     dts = []
     count = 0
+    #block.add_poly(0,0,0)
+    i,j,k = 0,0,0
     while running:
         '''
         i,j,k = (random.randrange(block.size[i]) for i in range(3))
         while (i,j,k) in block.polys:
             i,j,k = (random.randrange(block.size[i]) for i in range(3))
-        '''
-        width, height, depth = block.size
         i = count//height//depth%width
         j = count//depth%height
-        k = count%depth
-        block.polys[(i,j,k)] = get_cube((i+0.5,j+0.5,k+0.5))
+        k = count%depth 
+        if count < 100:
+            width, height, depth = block.size
+            delta = random.choice([(0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)])
+            new_i = i + delta[0]
+            new_j = j + delta[1]
+            new_k = k + delta[2]
+            while new_i < 0 or new_i >= width or new_j < 0 or new_j >= height or new_k < 0 or new_k >= depth or (new_i,new_j,new_k) in block.polys:
+                delta = random.choice([(0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)])
+                new_i = i + delta[0]
+                new_j = j + delta[1]
+                new_k = k + delta[2]
+            i,j,k = new_i,new_j,new_k
+            print(i,j,k)
+            block.add_poly(i,j,k)
         count += 1
-        print(block.contiguous())
+        '''
+        #print(block.contig)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -618,9 +891,11 @@ if __name__ == "__main__":
                     camera.zoom /= 1.1
                 if event.key == pygame.K_SPACE:
                     if tuple(block.select[:3]) in block.polys:
+                        pass
                         del block.polys[tuple(block.select[:3])]
                     else:
-                        block.polys[tuple(block.select[:3])] = get_cube((block.select[0]+0.5,block.select[1]+0.5,block.select[2]+0.5))
+                        block.add_poly(*block.select[:3])
+                        #block.polys[tuple(block.select[:3])] = get_cube((block.select[0]+0.5,block.select[1]+0.5,block.select[2]+0.5))
                     #for i,j,k in block.polys:
                     #    for face_index,face in enumerate(block.polys[(i,j,k)].faces):
                     #        light_input_queue.put((block.illuminate, (light, (i,j,k), face_index)), block=False)
@@ -679,7 +954,7 @@ if __name__ == "__main__":
             pygame.draw.polygon(screen, light_dict[key], triangle)
         pygame.display.flip()
         dT = clock.tick(60) / 1000
-        print(dT, len(block.polys))
+        print(dT, len(set(block.polys.values())))
         dts.append(dT)
     light_process.kill()
     plt.plot(dts)
