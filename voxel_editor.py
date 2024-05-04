@@ -196,10 +196,7 @@ class Polyhedron:
         point = self.verts[list(start)[0]]
         circuit.append(point)
         #print([[self.verts[index] for index in self.edges[edge_index]] for edge_index in face])
-        try:
-            current = list(edge_lookup[point] - set([start]))[0]
-        except IndexError:
-            return []
+        current = list(edge_lookup[point] - set([start]))[0]
         #print([[self.verts[index] for index in edge] for edge in self.edges])
         while current != start:
             point = self.verts[list(current - previous)[0]]
@@ -207,10 +204,7 @@ class Polyhedron:
             previous = current
             #print(point, [[self.verts[index] for index in edge] for edge in edge_lookup[point]])
             #print('circuit', circuit)
-            try:
-                current = list(edge_lookup[point] - set([current]))[0]
-            except IndexError:
-                return []
+            current = list(edge_lookup[point] - set([current]))[0]
         return circuit
     # returns any edge that intersects the line segment between p1 and p2
     def intersect(self, p1, p2):
@@ -599,7 +593,8 @@ class Block:
         self.block = get_cube((width/2,height/2,depth/2),factors=(width,height,depth))
         self.illumination_map = dict()
         self.contig = dict()
-        self.polys = dict()
+        self.poly = Polyhedron()
+        self.polys = []
         self.unique = []
         self.select = [0,0,0,0]
     def draw(self, pygame, screen):
@@ -611,36 +606,23 @@ class Block:
             p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
             p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
             pygame.draw.line(screen, "white", p1, p2)
-        to_draw = []
-        for poly in set(self.polys.values()):
-            #cube = self.polys[(i,j,k)]
+        for poly in self.polys:
             for face_index,face in enumerate(poly.faces):
                 points = poly.circuit(face_index)
-                #print(points)
-                if not len(points):
-                    continue
                 centroid = tuple(sum(points[i][j] for i,x in enumerate(points))/len(points) for j in range(3))
                 distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
                 points = [camera.project(x) for x in points]
                 points = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in points]
-                #points = np.array(points)
-                #hull = ConvexHull(points)
                 color = "white"
-                to_draw.append(((distance, pygame.draw.polygon, (color,points))))
-        to_draw = sorted(to_draw, reverse=True, key=operator.itemgetter(0))
-        for distance, func, args in to_draw:
-            func(screen, *args)
-        for cube in set(self.polys.values()):
-            #cube = self.polys[(i,j,k)]
-            for edge in cube.edges:
-                p1, p2 = tuple(cube.verts[index] for index in edge)
+                pygame.draw.polygon(screen, color, points)
+            for edge in poly.edges:
+                p1, p2 = tuple(poly.verts[index] for index in edge)
                 centroid = ((p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2)
                 distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
                 #print(p1,p2)
                 p1, p2 = camera.project(p1), camera.project(p2)
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
-                #to_draw.append(((distance, pygame.draw.line, ("black", p1, p2))))
                 pygame.draw.line(screen, "black", p1, p2)
         width, height, depth = self.size
         if self.select[3] == 0:
@@ -665,35 +647,121 @@ class Block:
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, (128,128,128), p1, p2)
     def add_poly(self,i,j,k):
-        self.polys[(i,j,k)] = get_cube((i+0.5,j+0.5,k+0.5))
-        others = set()
         self.contig[(i,j,k)] = {(i,j,k)}
         for delta in [(1,0,0),(0,1,0),(0,0,1)]:
             other = (i+delta[0],j+delta[1],k+delta[2])
-            if other in self.polys and self.polys[(i,j,k)] != self.polys[other]:
-                self.polys[other].merge(self.polys[(i,j,k)])
-                self.polys[(i,j,k)] = self.polys[other]
-                others.add(other)
+            if other in self.contig and self.contig[(i,j,k)] != self.contig[other]:
                 self.contig[other].update(self.contig[(i,j,k)])
                 self.contig[(i,j,k)] = self.contig[other]
-                for other in others:
-                    self.polys[other] = self.polys[(i,j,k)]
-                    for other2 in self.contig[other]:
-                        self.polys[other2] = self.polys[(i,j,k)]
+                for other in self.contig[(i,j,k)]:
+                    self.contig[other] = self.contig[(i,j,k)]
             other = (i-delta[0],j-delta[1],k-delta[2])
-            if other in self.polys and self.polys[(i,j,k)] != self.polys[other]:
-                self.polys[other].merge(self.polys[(i,j,k)])
-                self.polys[(i,j,k)] = self.polys[other]
-                others.add(other)
+            if other in self.contig and self.contig[(i,j,k)] != self.contig[other]:
                 self.contig[other].update(self.contig[(i,j,k)])
                 self.contig[(i,j,k)] = self.contig[other]
-                for other in others:
-                    self.polys[other] = self.polys[(i,j,k)]
-                    for other2 in self.contig[other]:
-                        self.polys[other2] = self.polys[(i,j,k)]
-        #else:
-        #    self.unique.append(self.polys[(i,j,k)])
-            #self.contig[(i,j,k)] = set([(i,j,k)])
+                for other in self.contig[(i,j,k)]:
+                    self.contig[other] = self.contig[(i,j,k)]
+        self.polys = []
+        for contig in set([frozenset(x) for x in self.contig.values()]):
+            segments = dict()
+            for i,j,k in contig:
+                for d1 in [(1,0,0),(0,1,0),(0,0,1)]:
+                    segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
+                    if segment not in segments:
+                        segments[segment] = 0
+                    segments[segment] += 1
+                    for d2 in [(1,0,0),(0,1,0),(0,0,1)]:
+                        if d1 < d2:
+                            segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                            if segment not in segments:
+                                segments[segment] = 0
+                            segments[segment] += 1
+                            segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                            if segment not in segments:
+                                segments[segment] = 0
+                            segments[segment] += 1
+                            for d3 in [(1,0,0),(0,1,0),(0,0,1)]:
+                                if d1 != d3 and d2 != d3:
+                                    segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
+                                    if segment not in segments:
+                                        segments[segment] = 0
+                                    segments[segment] += 1
+            segment_map = dict()
+            for segment in segments:
+                if segments[segment] % 2 == 1:
+                    for point in segment:
+                        if point not in segment_map:
+                            segment_map[point] = set()
+                        segment_map[point].add(segment)
+
+            for key in segment_map:
+                found = True
+                while found:
+                    found = False
+                    for segment1 in segment_map[key]:
+                        for segment2 in segment_map[key]:
+                            if segment1 != segment2 and Polyhedron.colinear(list(segment1|segment2)):
+                                segment3 = segment1 ^ segment2
+                                found = True
+                                break
+                        if found:
+                            break
+                    if found:
+                        for point in segment1:
+                            segment_map[point].remove(segment1)
+                        for point in segment2:
+                            segment_map[point].remove(segment2)
+                        for point in segment3:
+                            segment_map[point].add(segment3)
+            edges = set()
+            for key in list(segment_map.keys()):
+                edges.update(segment_map[key])
+                if len(segment_map[key]) == 0:
+                    del segment_map[key]
+            verts = set()
+            for edge in edges:
+                verts.update(edge)
+            face_map = dict()
+            for key in segment_map:
+                for edge1 in segment_map[key]:
+                    for edge2 in segment_map[key]:
+                        if edge1 != edge2 and len(edge1&edge2):
+                            if edge1 not in face_map:
+                                face_map[edge1] = set()
+                            face_map[edge1].add(frozenset([edge1,edge2]))
+                            if edge2 not in face_map:
+                                face_map[edge2] = set()
+                            face_map[edge2].add(frozenset([edge1,edge2]))
+            for key in face_map:
+                found = True
+                while found:
+                    found = False
+                    for face1 in face_map[key]:
+                        for face2 in face_map[key]:
+                            if face1 != face2 and Polyhedron.coplanar(list({point for edge in face1|face2 for point in edge})):
+                                found = True
+                                face3 = face1|face2
+                                break
+                        if found:
+                            break
+                    if found:
+                        for edge in face1:
+                            face_map[edge].remove(face1)
+                        for edge in face2:
+                            face_map[edge].remove(face2) 
+                        for edge in face3:
+                            face_map[edge].add(face3)
+
+            faces = set()
+            for value in face_map.values():
+                faces.update(value)
+            verts = list(verts)
+            edges = list(edges)
+            poly = Polyhedron()
+            poly.faces = [frozenset([edges.index(edge) for edge in face]) for face in faces]
+            poly.edges = [frozenset([verts.index(vert) for vert in edge]) for edge in edges]
+            poly.verts = verts
+            self.polys.append(poly)
             
 
     def contiguous(self):
@@ -786,7 +854,7 @@ if __name__ == "__main__":
     #block.block[1][4][2] = 1
     dts = []
     count = 0
-    #block.add_poly(0,0,0)
+    block.add_poly(0,0,0)
     i,j,k = 0,0,0
     while running:
         '''
@@ -795,7 +863,8 @@ if __name__ == "__main__":
             i,j,k = (random.randrange(block.size[i]) for i in range(3))
         i = count//height//depth%width
         j = count//depth%height
-        k = count%depth 
+        k = count%depth
+        '''
         if count < 100:
             width, height, depth = block.size
             delta = random.choice([(0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)])
@@ -811,7 +880,6 @@ if __name__ == "__main__":
             print(i,j,k)
             block.add_poly(i,j,k)
         count += 1
-        '''
         #print(block.contig)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -954,7 +1022,7 @@ if __name__ == "__main__":
             pygame.draw.polygon(screen, light_dict[key], triangle)
         pygame.display.flip()
         dT = clock.tick(60) / 1000
-        print(dT, len(set(block.polys.values())))
+        print(dT, len(block.polys))
         dts.append(dT)
     light_process.kill()
     plt.plot(dts)
