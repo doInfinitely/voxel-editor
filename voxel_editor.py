@@ -588,15 +588,17 @@ class Crosshair():
         pygame.draw.line(screen, "white", p[0], p[1])
 
 class Block:
-    def __init__(self, width, height, depth):
+    def __init__(self, width, height, depth, unit=1):
         self.size = (width,height,depth)
         self.block = get_cube((width/2,height/2,depth/2),factors=(width,height,depth))
         self.illumination_map = dict()
         self.contig = dict()
-        self.poly = Polyhedron()
-        self.polys = []
+        self.polys = dict()
+        self.segments = dict()
         self.unique = []
         self.select = [0,0,0,0]
+        self.unit = unit
+        self.select_size = [unit,unit,unit]
     def draw(self, pygame, screen):
         screen_width, screen_height = screen.get_size()
         for edge in self.block.edges:
@@ -606,7 +608,7 @@ class Block:
             p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
             p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
             pygame.draw.line(screen, "white", p1, p2)
-        for poly in self.polys:
+        for poly in self.polys.values():
             for face_index,face in enumerate(poly.faces):
                 points = poly.circuit(face_index)
                 centroid = tuple(sum(points[i][j] for i,x in enumerate(points))/len(points) for j in range(3))
@@ -638,7 +640,7 @@ class Block:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, "white", p1, p2)
-        select_cube = get_cube((self.select[0]+0.5,self.select[1]+0.5,self.select[2]+0.5))
+        select_cube = get_cube((self.select[0]+self.select_size[0]/2,self.select[1]+self.select_size[1]/2,self.select[2]+self.select_size[2]/2), factors=self.select_size)
         for edge in select_cube.edges:
             p1, p2 = tuple(select_cube.verts[index] for index in edge)
             p1, p2 = camera.project(p1), camera.project(p2)
@@ -646,123 +648,281 @@ class Block:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, (128,128,128), p1, p2)
-    def add_poly(self,i,j,k):
-        self.contig[(i,j,k)] = {(i,j,k)}
-        for delta in [(1,0,0),(0,1,0),(0,0,1)]:
-            other = (i+delta[0],j+delta[1],k+delta[2])
-            if other in self.contig and self.contig[(i,j,k)] != self.contig[other]:
-                self.contig[other].update(self.contig[(i,j,k)])
-                self.contig[(i,j,k)] = self.contig[other]
-                for other in self.contig[(i,j,k)]:
-                    self.contig[other] = self.contig[(i,j,k)]
-            other = (i-delta[0],j-delta[1],k-delta[2])
-            if other in self.contig and self.contig[(i,j,k)] != self.contig[other]:
-                self.contig[other].update(self.contig[(i,j,k)])
-                self.contig[(i,j,k)] = self.contig[other]
-                for other in self.contig[(i,j,k)]:
-                    self.contig[other] = self.contig[(i,j,k)]
-        self.polys = []
-        for contig in set([frozenset(x) for x in self.contig.values()]):
-            segments = dict()
-            for i,j,k in contig:
-                for d1 in [(1,0,0),(0,1,0),(0,0,1)]:
-                    segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
+        if self.select[1] > 0:
+            shadow = get_cube((self.select[0]+self.select_size[0]/2,0+self.select[1]/2,self.select[2]+self.select_size[2]/2), factors=(self.select_size[0],self.select[1],self.select_size[2]))
+            for edge in shadow.edges:
+                p1, p2 = tuple(shadow.verts[index] for index in edge)
+                p1, p2 = camera.project(p1), camera.project(p2)
+                if p1 and p2:
+                    p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                    p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                    pygame.draw.line(screen, (128,128,128), p1, p2)
+        if self.select[0] > 0:
+            shadow = get_cube((0+self.select[0]/2,self.select[1]+self.select_size[1]/2,self.select[2]+self.select_size[2]/2), factors=(self.select[0],self.select_size[1],self.select_size[2]))
+            for edge in shadow.edges:
+                p1, p2 = tuple(shadow.verts[index] for index in edge)
+                p1, p2 = camera.project(p1), camera.project(p2)
+                if p1 and p2:
+                    p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                    p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                    pygame.draw.line(screen, (128,128,128), p1, p2)
+    def add_poly(self,pos,size=(1,1,1),reconstruct=True):
+        edited = set()
+        for i in range(pos[0],pos[0]+size[0]):
+            for j in range(pos[1],pos[1]+size[1]):
+                for k in range(pos[2],pos[2]+size[2]):
+                    self.contig[(i,j,k)] = {(i,j,k)}
+                    for delta in [(1,0,0),(0,1,0),(0,0,1)]:
+                        for m in [-1,1]:
+                            other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
+                            if other in self.contig and self.contig[(i,j,k)] != self.contig[other]:
+                                edited.add(frozenset(self.contig[other]))
+                                self.contig[other].update(self.contig[(i,j,k)])
+                                self.contig[(i,j,k)] = self.contig[other]
+                                for other in self.contig[(i,j,k)]:
+                                    self.contig[other] = self.contig[(i,j,k)]
+        i,j,k = pos
+        contig = self.contig[(i,j,k)]
+        segments = dict()
+        for x in edited:
+            if x in self.polys:
+                del self.polys[x]
+            if x in self.segments:
+                for key in self.segments[x]:
+                    if key not in segments:
+                        segments[key] = 0
+                    segments[key] += self.segments[x][key]
+        for i1 in range(3):
+            pos = [i,j,k]
+            start = [x for x in pos]
+            while pos[i1] < start[i1]+size[i1]:
+                end = [x for x in pos]
+                end[i1] += self.unit
+                segment = frozenset([tuple(pos),tuple(end)])
+                if segment not in segments:
+                    segments[segment] = 0
+                segments[segment] += self.unit
+                pos[i1] += self.unit
+            for i2 in range(3):
+                if i1 < i2:
+                    pos = [i,j,k]
+                    pos[i1] += size[i1]
+                    start = [x for x in pos]
+                    while pos[i2] < start[i2]+size[i2]:
+                        end = [x for x in pos]
+                        end[i2] += self.unit
+                        segment = frozenset([tuple(pos),tuple(end)])
+                        if segment not in segments:
+                            segments[segment] = 0
+                        segments[segment] += self.unit
+                        pos[i2] += self.unit
+                    pos = [i,j,k]
+                    pos[i2] += size[i2]
+                    start = [x for x in pos]
+                    while pos[i1] < start[i1]+size[i1]:
+                        end = [x for x in pos]
+                        end[i1] += self.unit
+                        segment = frozenset([tuple(pos),tuple(end)])
+                        if segment not in segments:
+                            segments[segment] = 0
+                        segments[segment] += self.unit
+                        pos[i1] += self.unit
+                    for i3 in range(3):
+                        if i1 != i3 and i2 != i3:
+                            pos = [i,j,k]
+                            pos[i1] += size[i1]
+                            pos[i2] += size[i2]
+                            start = [x for x in pos]
+                            while pos[i3] < start[i3]+size[i3]:
+                                end = [x for x in pos]
+                                end[i3] += self.unit
+                                segment = frozenset([tuple(pos),tuple(end)])
+                                if segment not in segments:
+                                    segments[segment] = 0
+                                segments[segment] += self.unit
+                                pos[i3] += self.unit
+        '''
+        for d1 in [(1,0,0),(0,1,0),(0,0,1)]:
+            segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
+            if segment not in segments:
+                segments[segment] = 0
+            segments[segment] += 1
+            for d2 in [(1,0,0),(0,1,0),(0,0,1)]:
+                if d1 < d2:
+                    segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
                     if segment not in segments:
                         segments[segment] = 0
                     segments[segment] += 1
-                    for d2 in [(1,0,0),(0,1,0),(0,0,1)]:
-                        if d1 < d2:
-                            segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                    segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                    if segment not in segments:
+                        segments[segment] = 0
+                    segments[segment] += 1
+                    for d3 in [(1,0,0),(0,1,0),(0,0,1)]:
+                        if d1 != d3 and d2 != d3:
+                            segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
                             if segment not in segments:
                                 segments[segment] = 0
                             segments[segment] += 1
-                            segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
-                            if segment not in segments:
-                                segments[segment] = 0
-                            segments[segment] += 1
-                            for d3 in [(1,0,0),(0,1,0),(0,0,1)]:
-                                if d1 != d3 and d2 != d3:
-                                    segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
-                                    if segment not in segments:
-                                        segments[segment] = 0
-                                    segments[segment] += 1
-            segment_map = dict()
-            for segment in segments:
-                if segments[segment] % 2 == 1:
-                    for point in segment:
-                        if point not in segment_map:
-                            segment_map[point] = set()
-                        segment_map[point].add(segment)
+        '''
+        self.segments[frozenset(contig)] = segments
+        if reconstruct:
+            self.construct_poly(frozenset(contig))
+    def construct_poly(self, contig):
+        segments = self.segments[contig]
+        segment_map = dict()
+        for segment in segments:
+            if segments[segment] % 2 == 1:
+                for point in segment:
+                    if point not in segment_map:
+                        segment_map[point] = set()
+                    segment_map[point].add(segment)
 
-            for key in segment_map:
-                found = True
-                while found:
-                    found = False
-                    for segment1 in segment_map[key]:
-                        for segment2 in segment_map[key]:
-                            if segment1 != segment2 and Polyhedron.colinear(list(segment1|segment2)):
-                                segment3 = segment1 ^ segment2
-                                found = True
-                                break
-                        if found:
+        for key in segment_map:
+            found = True
+            while found:
+                found = False
+                for segment1 in segment_map[key]:
+                    for segment2 in segment_map[key]:
+                        if segment1 != segment2 and Polyhedron.colinear(list(segment1|segment2)):
+                            segment3 = segment1 ^ segment2
+                            found = True
                             break
                     if found:
-                        for point in segment1:
-                            segment_map[point].remove(segment1)
-                        for point in segment2:
-                            segment_map[point].remove(segment2)
-                        for point in segment3:
-                            segment_map[point].add(segment3)
-            edges = set()
-            for key in list(segment_map.keys()):
-                edges.update(segment_map[key])
-                if len(segment_map[key]) == 0:
-                    del segment_map[key]
-            verts = set()
-            for edge in edges:
-                verts.update(edge)
-            face_map = dict()
-            for key in segment_map:
-                for edge1 in segment_map[key]:
-                    for edge2 in segment_map[key]:
-                        if edge1 != edge2 and len(edge1&edge2):
-                            if edge1 not in face_map:
-                                face_map[edge1] = set()
-                            face_map[edge1].add(frozenset([edge1,edge2]))
-                            if edge2 not in face_map:
-                                face_map[edge2] = set()
-                            face_map[edge2].add(frozenset([edge1,edge2]))
-            for key in face_map:
-                found = True
-                while found:
-                    found = False
-                    for face1 in face_map[key]:
-                        for face2 in face_map[key]:
-                            if face1 != face2 and Polyhedron.coplanar(list({point for edge in face1|face2 for point in edge})):
-                                found = True
-                                face3 = face1|face2
-                                break
-                        if found:
+                        break
+                if found:
+                    for point in segment1:
+                        segment_map[point].remove(segment1)
+                    for point in segment2:
+                        segment_map[point].remove(segment2)
+                    for point in segment3:
+                        segment_map[point].add(segment3)
+        edges = set()
+        for key in list(segment_map.keys()):
+            edges.update(segment_map[key])
+            if len(segment_map[key]) == 0:
+                del segment_map[key]
+        verts = set()
+        for edge in edges:
+            verts.update(edge)
+        face_map = dict()
+        for key in segment_map:
+            for edge1 in segment_map[key]:
+                for edge2 in segment_map[key]:
+                    if edge1 != edge2 and len(edge1&edge2):
+                        if edge1 not in face_map:
+                            face_map[edge1] = set()
+                        face_map[edge1].add(frozenset([edge1,edge2]))
+                        if edge2 not in face_map:
+                            face_map[edge2] = set()
+                        face_map[edge2].add(frozenset([edge1,edge2]))
+        for key in face_map:
+            found = True
+            while found:
+                found = False
+                for face1 in face_map[key]:
+                    for face2 in face_map[key]:
+                        if face1 != face2 and Polyhedron.coplanar(list({point for edge in face1|face2 for point in edge})):
+                            found = True
+                            face3 = face1|face2
                             break
                     if found:
-                        for edge in face1:
-                            face_map[edge].remove(face1)
-                        for edge in face2:
-                            face_map[edge].remove(face2) 
-                        for edge in face3:
-                            face_map[edge].add(face3)
+                        break
+                if found:
+                    for edge in face1:
+                        face_map[edge].remove(face1)
+                    for edge in face2:
+                        face_map[edge].remove(face2) 
+                    for edge in face3:
+                        face_map[edge].add(face3)
 
-            faces = set()
-            for value in face_map.values():
-                faces.update(value)
-            verts = list(verts)
-            edges = list(edges)
-            poly = Polyhedron()
-            poly.faces = [frozenset([edges.index(edge) for edge in face]) for face in faces]
-            poly.edges = [frozenset([verts.index(vert) for vert in edge]) for edge in edges]
-            poly.verts = verts
-            self.polys.append(poly)
-            
+        faces = set()
+        for value in face_map.values():
+            faces.update(value)
+        verts = list(verts)
+        edges = list(edges)
+        poly = Polyhedron()
+        poly.faces = [frozenset([edges.index(edge) for edge in face]) for face in faces]
+        poly.edges = [frozenset([verts.index(vert) for vert in edge]) for edge in edges]
+        poly.verts = verts
+        self.polys[contig] = poly
+    def del_poly(self,i,j,k):
+        contig = self.contig[(i,j,k)]
+        del self.contig[(i,j,k)]
+        del self.polys[frozenset(contig)]
+        contig.remove((i,j,k))
+        removed = (i,j,k)
+        visited = set()
+        queue = []
+        double_break = False
+        for delta in [(1,0,0),(0,1,0),(0,0,1)]:
+            for m in [-1,1]:
+                other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
+                if other in contig:
+                    queue.append(other)
+                    double_break = True
+                    break
+            if double_break:
+                break
+        while len(queue):
+            i,j,k = queue.pop()
+            visited.add((i,j,k))
+            for delta in [(1,0,0),(0,1,0),(0,0,1)]:
+                for m in [-1,1]:
+                    other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
+                    if other in contig and other not in visited:
+                        queue.append(other)
+        if len(visited) == len(contig):
+            segments = self.segments[frozenset(contig)|frozenset([removed])]
+            del self.segments[frozenset(contig)|frozenset([removed])]
+            i,j,k = removed
+            for d1 in [(1,0,0),(0,1,0),(0,0,1)]:
+                segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
+                if segment not in segments:
+                    segments[segment] = 0
+                segments[segment] -= 1
+                for d2 in [(1,0,0),(0,1,0),(0,0,1)]:
+                    if d1 < d2:
+                        segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                        if segment not in segments:
+                            segments[segment] = 0
+                        segments[segment] -= 1
+                        segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                        if segment not in segments:
+                            segments[segment] = 0
+                        segments[segment] += 1
+                        for d3 in [(1,0,0),(0,1,0),(0,0,1)]:
+                            if d1 != d3 and d2 != d3:
+                                segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
+                                if segment not in segments:
+                                    segments[segment] = 0
+                                segments[segment] -= 1
+            self.segments[frozenset(contig)] = segments
+            self.construct_poly(frozenset(contig))
+        else:      
+            del self.segments[frozenset(contig)|frozenset([removed])]
+            for other in contig:
+                del self.contig[other]
+            edited = set()
+            for i,j,k in contig:
+                self.add_poly((i,j,k),reconstruct=False)
+                edited.add((i,j,k))
+            for contig in {frozenset(self.contig[x]) for x in edited}:
+                self.construct_poly(contig)
+    def subdivide(self, divisor):
+        block = Block(self.width, self.height, self.depth, self.unit/divisor)
+        for key in self.contig:
+            d = [0,0,0]
+            while d[0] < self.unit:
+                while d[1] < self.unit:
+                    while d[2] < self.unit:
+                        new_key = (key[0]+d[0], key[1]+d[1], key[2]+d[2])
+                            contig[new_key] = self.contig[key]
+                            contig[new_key].add(new_key)
+                        d[2] += unit
+                    d[1] += unit
+                d[0] += unit
+
+        
 
     def contiguous(self):
         output = {(i,j,k):frozenset([(i,j,k)]) for (i,j,k) in self.polys}
@@ -854,8 +1014,9 @@ if __name__ == "__main__":
     #block.block[1][4][2] = 1
     dts = []
     count = 0
-    block.add_poly(0,0,0)
+    #block.add_poly(0,0,0)
     i,j,k = 0,0,0
+    space_down = False
     while running:
         '''
         i,j,k = (random.randrange(block.size[i]) for i in range(3))
@@ -864,14 +1025,13 @@ if __name__ == "__main__":
         i = count//height//depth%width
         j = count//depth%height
         k = count%depth
-        '''
         if count < 100:
             width, height, depth = block.size
             delta = random.choice([(0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)])
             new_i = i + delta[0]
             new_j = j + delta[1]
             new_k = k + delta[2]
-            while new_i < 0 or new_i >= width or new_j < 0 or new_j >= height or new_k < 0 or new_k >= depth or (new_i,new_j,new_k) in block.polys:
+            while new_i < 0 or new_i >= width or new_j < 0 or new_j >= height or new_k < 0 or new_k >= depth or (new_i,new_j,new_k) in block.contig:
                 delta = random.choice([(0,0,1),(0,0,-1),(0,1,0),(0,-1,0),(1,0,0),(-1,0,0)])
                 new_i = i + delta[0]
                 new_j = j + delta[1]
@@ -880,6 +1040,7 @@ if __name__ == "__main__":
             print(i,j,k)
             block.add_poly(i,j,k)
         count += 1
+        '''
         #print(block.contig)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -897,58 +1058,108 @@ if __name__ == "__main__":
                     camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (0,0,-pi/180*10))
                 if event.key == pygame.K_e:
                     camera.origin, camera.focal, camera.x_vector, camera.y_vector = rotate([camera.origin, camera.focal, camera.x_vector, camera.y_vector], (0,0,pi/180*10))
-                if event.key == pygame.K_l:
-                    if block.select[0] < block.size[0]-1:
-                        block.select[0] += 1
-                    block.select[3] = 0
-                if event.key == pygame.K_j:
-                    if block.select[0] > 0:
-                        block.select[0] -= 1
-                    block.select[3] = 0
-                if event.key == pygame.K_i:
-                    if block.select[1] < block.size[1]-1:
-                        block.select[1] += 1
-                    block.select[3] = 1
-                if event.key == pygame.K_k:
-                    if block.select[1] > 0:
-                        block.select[1] -= 1
-                    block.select[3] = 1
-                if event.key == pygame.K_u:
-                    if block.select[2] < block.size[2]-1:
-                        block.select[2] += 1
-                    block.select[3] = 2
-                if event.key == pygame.K_o:
-                    if block.select[2] > 0:
-                        block.select[2] -= 1
-                    block.select[3] = 2
                 if event.key == pygame.K_UP:
-                    if block.select[3] == 0 and block.select[2] < block.size[2]-1:
-                        block.select[2] += 1
-                    elif block.select[3] == 1 and block.select[1] < block.size[1]-1:
-                        block.select[1] += 1
-                    elif block.select[3] == 2 and block.select[1] < block.size[1]-1:
-                        block.select[1] += 1
+                    if not space_down:
+                        if block.select[3] == 0 and block.select[2] < block.size[2]-1:
+                            block.select[2] += 1
+                        elif block.select[3] == 1 and block.select[1] < block.size[1]-1:
+                            block.select[1] += 1
+                        elif block.select[3] == 2 and block.select[1] < block.size[1]-1:
+                            block.select[1] += 1
+                    else:
+                        if block.select[3] == 0 and block.select[2]+block.select_size[2] < block.size[2]:
+                            block.select_size[2] += 1
+                            if block.select_size[2] == 0:
+                                block.select_size[2] = 1
+                        elif block.select[3] == 1 and block.select[1]+block.select_size[1] < block.size[1]:
+                            block.select_size[1] += 1
+                            if block.select_size[1] == 0:
+                                block.select_size[1] = 1
+                        elif block.select[3] == 2 and block.select[1]+block.select_size[1] < block.size[1]:
+                            block.select_size[1] += 1
+                            if block.select_size[1] == 0:
+                                block.select_size[1] = 1
                 if event.key == pygame.K_DOWN:
-                    if block.select[3] == 0 and block.select[2] > 0:
-                        block.select[2] -= 1
-                    elif block.select[3] == 1 and block.select[1] > 0:
-                        block.select[1] -= 1
-                    elif block.select[3] == 2 and block.select[1] > 0:
-                        block.select[1] -= 1
+                    if not space_down:
+                        if block.select[3] == 0 and block.select[2] > 0:
+                            block.select[2] -= 1
+                        elif block.select[3] == 1 and block.select[1] > 0:
+                            block.select[1] -= 1
+                        elif block.select[3] == 2 and block.select[1] > 0:
+                            block.select[1] -= 1
+                    else:
+                        if block.select[3] == 0 and block.select[2]+block.select_size[2]  > 0:
+                            block.select_size[2] -= 1
+                            if block.select_size[2] == 0:
+                                if block.select[2] != 0:
+                                    block.select_size[2] = -1
+                                else:
+                                    block.select_size[2] = 1
+                        elif block.select[3] == 1 and block.select[1]+block.select_size[1] > 0:
+                            block.select_size[1] -= 1
+                            if block.select_size[1] == 0:
+                                if block.select[1] != 0:
+                                    block.select_size[1] = -1
+                                else:
+                                    block.select_size[1] = 1
+                        elif block.select[3] == 2 and block.select[1]+block.select_size[1] > 0:
+                            block.select_size[1] -= 1
+                            if block.select_size[1] == 0:
+                                if block.select[1] != 0:
+                                    block.select_size[1] = -1
+                                else:
+                                    block.select_size[1] = 1
                 if event.key == pygame.K_LEFT:
-                    if block.select[3] == 0 and block.select[0] > 0:
-                        block.select[0] -= 1
-                    elif block.select[3] == 1 and block.select[0] > 0:
-                        block.select[0] -= 1
-                    elif block.select[3] == 2 and block.select[2] < block.size[2]-1:
-                        block.select[2] += 1
+                    if not space_down:
+                        if block.select[3] == 0 and block.select[0] > 0:
+                            block.select[0] -= 1
+                        elif block.select[3] == 1 and block.select[0] > 0:
+                            block.select[0] -= 1
+                        elif block.select[3] == 2 and block.select[2] < block.size[2]-1:
+                            block.select[2] += 1
+                    else:
+                        if block.select[3] == 0 and block.select[0]+block.select_size[0] > 0:
+                            block.select_size[0] -= 1
+                            if block.select_size[0] == 0:
+                                if block.select[0] != 0:
+                                    block.select_size[0] = -1
+                                else:
+                                    block.select_size[0] = 1
+                        elif block.select[3] == 1 and block.select[0]+block.select_size[0] > 0:
+                            block.select_size[0] -= 1
+                            if block.select_size[0] == 0:
+                                if block.select[0] != 0:
+                                    block.select_size[0] = -1
+                                else:
+                                    block.select_size[0] = 1
+                        elif block.select[3] == 2 and block.select[2]+block.select_size[2] < block.size[2]:
+                            block.select_size[2] += 1
+                            if block.select_size[2] == 0:
+                                block.select_size[2] = 1
                 if event.key == pygame.K_RIGHT:
-                    if block.select[3] == 0 and block.select[0] < block.size[0]-1:
-                        block.select[0] += 1
-                    elif block.select[3] == 1 and block.select[0] < block.size[0]-1:
-                        block.select[0] += 1
-                    elif block.select[3] == 2 and block.select[2] > 0:
-                        block.select[2] -= 1
+                    if not space_down:
+                        if block.select[3] == 0 and block.select[0] < block.size[0]-1:
+                            block.select[0] += 1
+                        elif block.select[3] == 1 and block.select[0] < block.size[0]-1:
+                            block.select[0] += 1
+                        elif block.select[3] == 2 and block.select[2] > 0:
+                            block.select[2] -= 1
+                    else:
+                        if block.select[3] == 0 and block.select[0]+block.select_size[0] < block.size[0]:
+                            block.select_size[0] += 1
+                            if block.select_size[0] == 0:
+                                block.select_size[0] = 1
+                        elif block.select[3] == 1 and block.select[0]+block.select_size[0] < block.size[0]:
+                            block.select_size[0] += 1
+                            if block.select_size[0] == 0:
+                                block.select_size[0] = 1
+                        elif block.select[3] == 2 and block.select[2]+block.select_size[2] >= 0:
+                            block.select_size[2] -= 1
+                            if block.select_size[2] == 0:
+                                if block.select[2] != 0:
+                                    block.select_size[2] = -1
+                                else:
+                                    block.select_size[2] = 1
                 if event.key == pygame.K_LSHIFT:
                     block.select[3] = (block.select[3]-1)%3
                 if event.key == pygame.K_RSHIFT:
@@ -958,15 +1169,27 @@ if __name__ == "__main__":
                 if event.key == pygame.K_x:
                     camera.zoom /= 1.1
                 if event.key == pygame.K_SPACE:
-                    if tuple(block.select[:3]) in block.polys:
-                        pass
-                        del block.polys[tuple(block.select[:3])]
+                    space_down = True    
+            if event.type == pygame.KEYUP:
+                if event.key == pygame.K_SPACE:
+                    space_down = False
+                    to_add = False
+                    for i in range(block.select[0],block.select[0]+block.select_size[0]):
+                        for j in range(block.select[1],block.select[1]+block.select_size[1]):
+                            for k in range(block.select[2],block.select[2]+block.select_size[2]):
+                                if not (i,j,k) in block.contig:
+                                    to_add = True
+                    if to_add:
+                        block.add_poly(block.select[:3],block.select_size)
                     else:
-                        block.add_poly(*block.select[:3])
-                        #block.polys[tuple(block.select[:3])] = get_cube((block.select[0]+0.5,block.select[1]+0.5,block.select[2]+0.5))
-                    #for i,j,k in block.polys:
-                    #    for face_index,face in enumerate(block.polys[(i,j,k)].faces):
-                    #        light_input_queue.put((block.illuminate, (light, (i,j,k), face_index)), block=False)
+                        for i in range(block.select[0],block.select[0]+block.select_size[0]):
+                            for j in range(block.select[1],block.select[1]+block.select_size[1]):
+                                for k in range(block.select[2],block.select[2]+block.select_size[2]):
+                                    block.del_poly(i,j,k)
+                    if to_add:
+                        block.construct_poly(frozenset(block.contig[tuple(block.select[:3])]))
+                    block.select = [block.select[0]+block.select_size[0]-1,block.select[1]+block.select_size[1]-1,block.select[2]+block.select_size[2]-1,block.select[3]]
+                    block.select_size = [1,1,1]
             if event.type == pygame.MOUSEMOTION:
                 x,y = pygame.mouse.get_pos()
                 x -= screen_width/2
