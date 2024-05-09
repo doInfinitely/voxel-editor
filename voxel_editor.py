@@ -920,11 +920,50 @@ class Block:
                 self.construct_poly(contig)
     def subdivide(self, divisor):
         block = Block(self.size[0], self.size[1], self.size[2], self.unit/divisor)
+        block.contig = self.contig
         block.select = self.select
+        block.polys = self.polys 
+        block.segments = dict()
+        for key in self.segments:
+            segments = dict()
+            for segment in self.segments[key]:
+                low, high = min(segment), max(segment)
+                diff = ((high[0]-low[0])/divisor,(high[1]-low[1])/divisor,(high[2]-low[2])/divisor)
+                point = low
+                while point < high:
+                    seg = frozenset([point, tuple(point[i]+diff[i] for i in range(3))])
+                    segments[seg] = self.segments[key][segment]
+                    point = tuple(point[i]+diff[i] for i in range(3))
+            block.segments[key] = segments
+        points = list(self.contig.keys())
+        for point in points:
+            contig = frozenset(self.contig)
+            i = point[0]
+            while i < point[0]+self.unit:
+                j = point[1]
+                while j < point[1]+self.unit:
+                    k = point[2]
+                    while k < point[2]+self.unit:
+                        if (i,j,k) not in block.contig[point]:
+                            block.contig[point].add((i,j,k))
+                            block.contig[(i,j,k)] = block.contig[point]
+                            if contig in block.segments:
+                                new_contig = frozenset(block.contig[point])
+                                block.segments[new_contig] = block.segments[contig]
+                                block.polys[new_contig] = block.polys[contig]
+                                del block.segments[contig]
+                                del block.polys[contig]
+                                contig = new_contig
+                        k += block.unit
+                    j += block.unit
+                i += block.unit
+
+        '''
         for key in self.contig:
             block.add_poly(key,tuple(self.unit for i in range(3)),reconstruct=False)
         for value in {frozenset(x) for x in block.contig.values()}:
             block.construct_poly(value)
+        '''
         return block
         
 
