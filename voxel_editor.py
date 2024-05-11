@@ -965,6 +965,16 @@ class Block:
             block.construct_poly(value)
         '''
         return block
+    def select_by_void(self):
+        i,j,k = self.select[:3]
+        if not (i,j,k) in self.contig:
+            return True
+        for delta in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
+            for m in [-1,1]:
+                other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
+                if not other in self.contig:
+                    return True
+        return False
         
 
     def contiguous(self):
@@ -1060,6 +1070,9 @@ if __name__ == "__main__":
     #block.add_poly(0,0,0)
     i,j,k = 0,0,0
     space_down = False
+    dir_mult1 = 1
+    dir_mult2 = 1
+    z_forward = True
     while running:
         '''
         i,j,k = (random.randrange(block.size[i]) for i in range(3))
@@ -1105,108 +1118,102 @@ if __name__ == "__main__":
                     block = block.subdivide(2)
                 if event.key == pygame.K_3:
                     block = block.subdivide(3)
-                if event.key == pygame.K_UP:
+                dir_mult1 = 1
+                if dot(camera.forward_vector(),(0,0,1)) < dot(camera.forward_vector(),(0,0,-1)):
+                    dir_mult1 = -1
+                dir_mult2 = 1
+                if dot(camera.forward_vector(),(1,0,0)) < dot(camera.forward_vector(),(-1,0,0)):
+                    dir_mult2 = -1
+                dir_mult3 = 1
+                if (dir_mult1 == -1 or dir_mult2 == -1) and dir_mult1 != dir_mult2:
+                    dir_mult3 = -1
+                dir_mult4 = 1
+                if dir_mult1 == -1 and dir_mult2 == -1:
+                    dir_mult4 = -1
+                direction = 1
+                if event.key in {pygame.K_DOWN, pygame.K_LEFT}:
+                    direction = -1
+                z_forward = True
+                if max(dot(camera.forward_vector(),(0,0,1)),dot(camera.forward_vector(),(0,0,-1))) < max(dot(camera.forward_vector(),(1,0,0)),dot(camera.forward_vector(),(-1,0,0))):
+                    z_forward = False
+                if event.key in {pygame.K_UP, pygame.K_DOWN}:
+                    index = 2
+                    if not z_forward:
+                        index = 0
                     if not space_down:
-                        if block.select[3] == 0 and block.select[2] < block.size[2]-block.unit:
-                            block.select[2] += block.unit
-                        elif block.select[3] == 1 and block.select[1] < block.size[1]-block.unit:
-                            block.select[1] += block.unit
-                        elif block.select[3] == 2 and block.select[1] < block.size[1]-block.unit:
-                            block.select[1] += block.unit
+                        if block.select[3] == 0:
+                            block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            while not block.select_by_void():
+                                block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                        elif block.select[3] == 1:
+                            block.select[1] += direction*block.unit
+                            while not block.select_by_void():
+                                block.select[1] += direction*block.unit
+                        elif block.select[3] == 2:
+                            block.select[1] += direction*block.unit
+                            while not block.select_by_void():
+                                block.select[1] += direction*block.unit
+                        for i in range(3):
+                            if block.select[i] < 0:
+                                block.select[i] = 0
+                            if block.select[i] > block.size[i]-block.unit:
+                                block.select[i] = block.size[i]-block.unit
                     else:
-                        if block.select[3] == 0 and block.select[2]+block.select_size[2] < block.size[2]:
-                            block.select_size[2] += block.unit
-                            if block.select_size[2] == 0:
-                                block.select_size[2] = block.unit
-                        elif block.select[3] == 1 and block.select[1]+block.select_size[1] < block.size[1]:
-                            block.select_size[1] += block.unit
-                            if block.select_size[1] == 0:
-                                block.select_size[1] = block.unit
-                        elif block.select[3] == 2 and block.select[1]+block.select_size[1] < block.size[1]:
-                            block.select_size[1] += block.unit
-                            if block.select_size[1] == 0:
-                                block.select_size[1] = block.unit
-                if event.key == pygame.K_DOWN:
+                        if block.select[3] == 0:
+                            block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                        elif block.select[3] == 1:
+                            block.select_size[1] += direction*block.unit
+                        elif block.select[3] == 2:
+                            block.select_size[1] += direction*block.unit
+                        if block.select_size[index] == 0:
+                            block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                        if block.select_size[1] == 0:
+                            block.select_size[1] = direction*block.unit
+                        for i in range(3):
+                            if block.select[i]+block.select_size[i] > block.size[i]:
+                                block.select_size[i] = block.size[i]-block.select[i]
+                            if block.select[i]+block.select_size[i] < 0:
+                                block.select_size[i] = -block.select[i]
+                if event.key in {pygame.K_RIGHT, pygame.K_LEFT}:
+                    index = 0
+                    if not z_forward:
+                        index = 2
                     if not space_down:
-                        if block.select[3] == 0 and block.select[2] > 0:
-                            block.select[2] -= block.unit
-                        elif block.select[3] == 1 and block.select[1] > 0:
-                            block.select[1] -= block.unit
-                        elif block.select[3] == 2 and block.select[1] > 0:
-                            block.select[1] -= block.unit
+                        if block.select[3] == 0:
+                            block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            while not block.select_by_void():
+                                block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                        elif block.select[3] == 1:
+                            block.select[0] += direction*dir_mult1*block.unit
+                            while not block.select_by_void():
+                                block.select[0] += direction*dir_mult1*block.unit
+                        elif block.select[3] == 2:
+                            block.select[2] -= direction*dir_mult2*block.unit
+                            while not block.select_by_void():
+                                block.select[2] += direction*dir_mult2*block.unit
+                        for i in [0,2]:
+                            if block.select[i] > block.size[i]-block.unit:
+                                block.select[i] = block.size[i]-block.unit
+                            if block.select[i] < 0:
+                                block.select[i] = 0
                     else:
-                        if block.select[3] == 0 and block.select[2]+block.select_size[2]  > 0:
-                            block.select_size[2] -= block.unit
+                        if block.select[3] == 0:
+                            block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            if block.select_size[index] == 0:
+                                block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                        elif block.select[3] == 1:
+                            block.select_size[0] += direction*dir_mult1*block.unit
+                            if block.select_size[0] == 0:
+                                block.select_size[0] = direction*dir_mult1*block.unit
+                        elif block.select[3] == 2:
+                            block.select_size[2] -= direction*dir_mult2*block.unit
                             if block.select_size[2] == 0:
-                                if block.select[2] != 0:
-                                    block.select_size[2] = -block.unit
-                                else:
-                                    block.select_size[2] = block.unit
-                        elif block.select[3] == 1 and block.select[1]+block.select_size[1] > 0:
-                            block.select_size[1] -= block.unit
-                            if block.select_size[1] == 0:
-                                if block.select[1] != 0:
-                                    block.select_size[1] = -block.unit
-                                else:
-                                    block.select_size[1] = block.unit
-                        elif block.select[3] == 2 and block.select[1]+block.select_size[1] > 0:
-                            block.select_size[1] -= block.unit
-                            if block.select_size[1] == 0:
-                                if block.select[1] != 0:
-                                    block.select_size[1] = -block.unit
-                                else:
-                                    block.select_size[1] = block.unit
-                if event.key == pygame.K_LEFT:
-                    if not space_down:
-                        if block.select[3] == 0 and block.select[0] > 0:
-                            block.select[0] -= block.unit
-                        elif block.select[3] == 1 and block.select[0] > 0:
-                            block.select[0] -= block.unit
-                        elif block.select[3] == 2 and block.select[2] < block.size[2]-block.unit:
-                            block.select[2] += block.unit
-                    else:
-                        if block.select[3] == 0 and block.select[0]+block.select_size[0] > 0:
-                            block.select_size[0] -= block.unit
-                            if block.select_size[0] == 0:
-                                if block.select[0] != 0:
-                                    block.select_size[0] = -block.unit
-                                else:
-                                    block.select_size[0] = block.unit
-                        elif block.select[3] == 1 and block.select[0]+block.select_size[0] > 0:
-                            block.select_size[0] -= block.unit
-                            if block.select_size[0] == 0:
-                                if block.select[0] != 0:
-                                    block.select_size[0] = -block.unit
-                                else:
-                                    block.select_size[0] = block.unit
-                        elif block.select[3] == 2 and block.select[2]+block.select_size[2] < block.size[2]:
-                            block.select_size[2] += block.unit
-                            if block.select_size[2] == 0:
-                                block.select_size[2] = block.unit
-                if event.key == pygame.K_RIGHT:
-                    if not space_down:
-                        if block.select[3] == 0 and block.select[0] < block.size[0]-block.unit:
-                            block.select[0] += block.unit
-                        elif block.select[3] == 1 and block.select[0] < block.size[0]-block.unit:
-                            block.select[0] += block.unit
-                        elif block.select[3] == 2 and block.select[2] > 0:
-                            block.select[2] -= block.unit
-                    else:
-                        if block.select[3] == 0 and block.select[0]+block.select_size[0] < block.size[0]:
-                            block.select_size[0] += block.unit
-                            if block.select_size[0] == 0:
-                                block.select_size[0] = block.unit
-                        elif block.select[3] == 1 and block.select[0]+block.select_size[0] < block.size[0]:
-                            block.select_size[0] += block.unit
-                            if block.select_size[0] == 0:
-                                block.select_size[0] = block.unit
-                        elif block.select[3] == 2 and block.select[2]+block.select_size[2] >= 0:
-                            block.select_size[2] -= block.unit
-                            if block.select_size[2] == 0:
-                                if block.select[2] != 0:
-                                    block.select_size[2] = -block.unit
-                                else:
-                                    block.select_size[2] = block.unit
+                                block.select_size[2] = -direction*dir_mult2*block.unit
+                        for i in [0,2]:
+                            if block.select[i]+block.select_size[i] > block.size[i]:
+                                block.select_size[i] = block.size[i]-block.select[i]
+                            if block.select[i]+block.select_size[i] < 0:
+                                block.select_size[i] = -block.select[i]
                 if event.key == pygame.K_LSHIFT:
                     block.select[3] = (block.select[3]-1)%3
                 if event.key == pygame.K_RSHIFT:
@@ -1222,31 +1229,46 @@ if __name__ == "__main__":
                     space_down = False
                     to_add = False
                     i = block.select[0]
-                    while i < block.select[0]+block.select_size[0]:
-                        j = block.select[1]
-                        while j < block.select[1]+block.select_size[1]:
-                            k = block.select[2]
-                            while k < block.select[2]+block.select_size[2]:
+                    i,i_max = block.select[0],block.select[0]+block.select_size[0]
+                    if block.select_size[0] < 0:
+                        i,i_max = i_max,i
+                    while i < i_max:
+                        j,j_max = block.select[1],block.select[1]+block.select_size[1]
+                        if block.select_size[1] < 0:
+                            j,j_max = j_max,j
+                        while j < j_max:
+                            k,k_max = block.select[2],block.select[2]+block.select_size[2]
+                            if block.select_size[2] < 0:
+                                k,k_max = k_max,k
+                            while k < k_max:
                                 if not (i,j,k) in block.contig:
                                     to_add = True
                                 k += block.unit
                             j += block.unit
                         i += block.unit
                     if to_add:
-                        block.add_poly(block.select[:3],block.select_size)
+                        i = min(block.select[0],block.select[0]+block.select_size[0])
+                        j = min(block.select[1],block.select[1]+block.select_size[1])
+                        k = min(block.select[2],block.select[2]+block.select_size[2])
+                        size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
+                        block.add_poly((i,j,k),size)
                     else:
-                        i = block.select[0]
-                        while i < block.select[0]+block.select_size[0]:
-                            j = block.select[1]
-                            while j < block.select[1]+block.select_size[1]:
-                                k = block.select[2]
-                                while k < block.select[2]+block.select_size[2]:
+                        i,i_max = block.select[0],block.select[0]+block.select_size[0]
+                        if block.select_size[0] < 0:
+                            i,i_max = i_max,i
+                        while i < i_max:
+                            j,j_max = block.select[1],block.select[1]+block.select_size[1]
+                            if block.select_size[1] < 0:
+                                j,j_max = j_max,j
+                            while j < j_max:
+                                k,k_max = block.select[2],block.select[2]+block.select_size[2]
+                                if block.select_size[2] < 0:
+                                    k,k_max = k_max,k
+                                while k < k_max:
                                     block.del_poly(i,j,k)
                                     k += block.unit
                                 j += block.unit
                             i += block.unit
-                    if to_add:
-                        block.construct_poly(frozenset(block.contig[tuple(block.select[:3])]))
                     block.select = [block.select[0]+block.select_size[0]-block.unit,block.select[1]+block.select_size[1]-block.unit,block.select[2]+block.select_size[2]-block.unit,block.select[3]]
                     block.select_size = [block.unit,block.unit,block.unit]
             if event.type == pygame.MOUSEMOTION:
@@ -1304,7 +1326,7 @@ if __name__ == "__main__":
             pygame.draw.polygon(screen, light_dict[key], triangle)
         pygame.display.flip()
         dT = clock.tick(60) / 1000
-        print(dT, len(block.polys))
+        print(dT, len(block.polys), dir_mult1, dir_mult2, z_forward)
         dts.append(dT)
     light_process.kill()
     plt.plot(dts)
