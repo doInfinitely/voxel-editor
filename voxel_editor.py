@@ -1127,9 +1127,6 @@ if __name__ == "__main__":
                 dir_mult3 = 1
                 if (dir_mult1 == -1 or dir_mult2 == -1) and dir_mult1 != dir_mult2:
                     dir_mult3 = -1
-                dir_mult4 = 1
-                if dir_mult1 == -1 and dir_mult2 == -1:
-                    dir_mult4 = -1
                 direction = 1
                 if event.key in {pygame.K_DOWN, pygame.K_LEFT}:
                     direction = -1
@@ -1160,13 +1157,13 @@ if __name__ == "__main__":
                                 block.select[i] = block.size[i]-block.unit
                     else:
                         if block.select[3] == 0:
-                            block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
                         elif block.select[3] == 1:
                             block.select_size[1] += direction*block.unit
                         elif block.select[3] == 2:
                             block.select_size[1] += direction*block.unit
                         if block.select_size[index] == 0:
-                            block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
                         if block.select_size[1] == 0:
                             block.select_size[1] = direction*block.unit
                         for i in range(3):
