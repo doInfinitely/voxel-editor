@@ -1066,6 +1066,7 @@ if __name__ == "__main__":
     pygame.mouse.set_visible(False)
     pygame.mouse.set_pos((screen_width/2, screen_height/2))
     crosshair = Crosshair()
+    mouse_down = False
     running = True
     framerate = 60
     light = (10,10,10)
@@ -1271,14 +1272,17 @@ if __name__ == "__main__":
                 x -= screen_width/2
                 y = -(y-screen_height/2)
                 crosshair.pos = (x,y)
+                if mouse_down:
+                    x,y = pygame.mouse.get_pos()
+                    delta_x, delta_y = x-mousedown_x, y-mousedown_y
+                    camera.move((camera.x_vector[0]*-delta_x/camera.zoom,camera.x_vector[1]*-delta_x/camera.zoom,camera.x_vector[2]*-delta_x/camera.zoom))
+                    camera.move((camera.y_vector[0]*delta_y/camera.zoom,camera.y_vector[1]*delta_y/camera.zoom,camera.y_vector[2]*delta_y/camera.zoom))
+                    mousedown_x, mousedown_y = x,y
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mousedown_x,mousedown_y = pygame.mouse.get_pos() 
-                pos = list(camera.origin)
+                mouse_down = True
             if event.type == pygame.MOUSEBUTTONUP:
-                x,y = pygame.mouse.get_pos()
-                delta_x, delta_y = x-mousedown_x, y-mousedown_y
-                camera.move((camera.x_vector[0]*-delta_x/camera.zoom,camera.x_vector[1]*-delta_x/camera.zoom,camera.x_vector[2]*-delta_x/camera.zoom))
-                camera.move((camera.y_vector[0]*delta_y/camera.zoom,camera.y_vector[1]*delta_y/camera.zoom,camera.y_vector[2]*delta_y/camera.zoom))
+                mouse_down = False
 
         screen.fill("black")
         crosshair.draw(pygame, screen)

@@ -34,6 +34,14 @@ class Camera {
         std::array<double,2> output = {x(0)*zoom,x(1)*zoom};
         return output;
     }
+    void move(std::array<double,3> displacement) {
+        origin[0] += displacement[0];
+        origin[1] += displacement[1];
+        origin[2] += displacement[2];
+        focal[0] += displacement[0];
+        focal[1] += displacement[1];
+        focal[2] += displacement[2];
+    }
 };
 
 class Polyhedron {
@@ -271,6 +279,16 @@ Polyhedron get_cube(std::array<double,3>displacement, std::array<double,3>factor
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
 
+class Crosshair {
+  public:
+    std::array<double,2> pos = {0,0};
+    void draw(SDL_Renderer* gRenderer) {
+        SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
+        SDL_RenderDrawLine(gRenderer, pos[0]+SCREEN_WIDTH/2-10, -pos[1]+SCREEN_HEIGHT/2, pos[0]+SCREEN_WIDTH/2+10,-pos[1]+SCREEN_HEIGHT/2);
+        SDL_RenderDrawLine(gRenderer, pos[0]+SCREEN_WIDTH/2, -pos[1]+SCREEN_HEIGHT/2-10, pos[0]+SCREEN_WIDTH/2,-pos[1]+SCREEN_HEIGHT/2+10);
+        }
+};
+
 bool init();
 
 //Frees media and shuts down SDL
@@ -339,7 +357,11 @@ int main( int argc, char* args[] ) {
         camera.focal[1] = 0;
         camera.focal[2] = -5;
         Polyhedron cube = get_cube({0,0,-1},{1,1,1},{0,0,0});
-
+        Crosshair crosshair;
+        bool mouse_down = false;
+        int mousedown_x;
+        int mousedown_y;
+        SDL_ShowCursor(SDL_DISABLE);
         // Main loop flag
         bool quit = false;
 
@@ -351,9 +373,30 @@ int main( int argc, char* args[] ) {
             // Handle events on queue
             while( SDL_PollEvent( &e ) != 0 ) {
                 //User requests quit
-                if( e.type == SDL_QUIT )
-                {
+                if( e.type == SDL_QUIT ) {
                     quit = true;
+                }
+                if( e.type == SDL_MOUSEMOTION) {
+                    int x, y;
+                    SDL_GetMouseState( &x, &y );
+                    crosshair.pos[0] = x-SCREEN_WIDTH/2;
+                    crosshair.pos[1] = -(y-SCREEN_HEIGHT/2);
+                    if (mouse_down) {
+                        double delta_x = x-mousedown_x;
+                        double delta_y = y-mousedown_y;
+                        camera.move({camera.x_vector[0]*-delta_x/camera.zoom,camera.x_vector[1]*-delta_x/camera.zoom,camera.x_vector[2]*-delta_x/camera.zoom});
+                        camera.move({camera.y_vector[0]*delta_y/camera.zoom,camera.y_vector[1]*delta_y/camera.zoom,camera.y_vector[2]*delta_y/camera.zoom});
+                        mousedown_x = x;
+                        mousedown_y = y;
+                    }
+                    
+                }
+                if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    SDL_GetMouseState( &mousedown_x, &mousedown_y );
+                    mouse_down = true;
+                }
+                if (e.type == SDL_MOUSEBUTTONUP) {
+                    mouse_down = false;
                 }
             }
             SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
@@ -367,6 +410,7 @@ int main( int argc, char* args[] ) {
                 cout << p1_2D[0] << " " << p1_2D[1] << " " << p2_2D[0] << " " << p2_2D[1] << endl;
                 SDL_RenderDrawLine( gRenderer, p1_2D[0]+SCREEN_WIDTH/2, p1_2D[1]*-1+SCREEN_HEIGHT/2, p2_2D[0]+SCREEN_WIDTH/2, p2_2D[1]*-1+SCREEN_HEIGHT/2 );
             }
+            crosshair.draw(gRenderer);
             //Update screen
             SDL_RenderPresent( gRenderer );
         }
