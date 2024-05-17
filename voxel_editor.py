@@ -99,9 +99,9 @@ class Camera:
 
 class Polyhedron:
     def __init__(self):
-        self.verts = set()
-        self.edges = set()
-        self.faces = set()
+        self.verts = []
+        self.edges = []
+        self.faces = []
     # return sequential points on the face
     def colinear(points):
         if len(points) < 3:
@@ -161,7 +161,7 @@ class Polyhedron:
             #print([len(x) for x in queue], [len(x) for x in cycles])
             path = queue.pop()
             for index in self.edges[path[-1]]:
-                if len(path) == 1 or self.verts[index] not in self.edges[path[-2]]:
+                if len(path) == 1 or index not in self.edges[path[-2]]:
                     point = self.verts[index]
                     for edge in edge_lookup[point]:
                         if edge not in path:
@@ -181,7 +181,6 @@ class Polyhedron:
         if not len(face):
             return []
         circuit = []
-        previous = frozenset()
         edge_lookup = dict()
         for edge_index in face:
             edge = self.edges[edge_index]
@@ -855,23 +854,37 @@ class Block:
         poly.edges = [frozenset([verts.index(vert) for vert in edge]) for edge in edges]
         poly.verts = verts
         self.polys[contig] = poly
-    def del_poly(self,i,j,k):
+    def del_poly(self,pos,size=(1,1,1)):
+        i,j,k = pos
         contig = self.contig[(i,j,k)]
-        del self.contig[(i,j,k)]
         del self.polys[frozenset(contig)]
-        contig.remove((i,j,k))
-        removed = (i,j,k)
+        removed = set()
+        i = pos[0]
+        while i < pos[0]+size[0]:
+            j = pos[1]
+            while j < pos[1]+size[1]:
+                k = pos[2]
+                while k < pos[2]+size[2]:
+                    del self.contig[(i,j,k)]
+                    contig.remove((i,j,k))
+                    removed.add((i,j,k))
+                    k += self.unit
+                j += self.unit
+            i += self.unit
         visited = set()
         queue = []
-        double_break = False
-        for delta in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
-            for m in [-1,1]:
-                other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
-                if other in contig:
-                    queue.append(other)
-                    double_break = True
+        triple_break = False
+        for i,j,k in removed:
+            for delta in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
+                for m in [-1,1]:
+                    other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
+                    if other in contig:
+                        queue.append(other)
+                        triple_break = True
+                        break
+                if triple_break:
                     break
-            if double_break:
+            if triple_break:
                 break
         while len(queue):
             i,j,k = queue.pop()
@@ -882,34 +895,34 @@ class Block:
                     if other in contig and other not in visited:
                         queue.append(other)
         if len(visited) == len(contig):
-            segments = self.segments[frozenset(contig)|frozenset([removed])]
-            del self.segments[frozenset(contig)|frozenset([removed])]
-            i,j,k = removed
-            for d1 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
-                segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
-                if segment not in segments:
-                    segments[segment] = 0
-                segments[segment] -= 1
-                for d2 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
-                    if d1 < d2:
-                        segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
-                        if segment not in segments:
-                            segments[segment] = 0
-                        segments[segment] -= 1
-                        segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
-                        if segment not in segments:
-                            segments[segment] = 0
-                        segments[segment] += 1
-                        for d3 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
-                            if d1 != d3 and d2 != d3:
-                                segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
-                                if segment not in segments:
-                                    segments[segment] = 0
-                                segments[segment] -= 1
+            segments = self.segments[frozenset(contig|removed)]
+            del self.segments[frozenset(contig|removed)]
+            for i,j,k in removed:
+                for d1 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
+                    segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
+                    if segment not in segments:
+                        segments[segment] = 0
+                    segments[segment] -= 1
+                    for d2 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
+                        if d1 < d2:
+                            segment = frozenset([(i+d1[0],j+d1[1],k+d1[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                            if segment not in segments:
+                                segments[segment] = 0
+                            segments[segment] -= 1
+                            segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
+                            if segment not in segments:
+                                segments[segment] = 0
+                            segments[segment] += 1
+                            for d3 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
+                                if d1 != d3 and d2 != d3:
+                                    segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
+                                    if segment not in segments:
+                                        segments[segment] = 0
+                                    segments[segment] -= 1
             self.segments[frozenset(contig)] = segments
             self.construct_poly(frozenset(contig))
         else:      
-            del self.segments[frozenset(contig)|frozenset([removed])]
+            del self.segments[frozenset(contig|removed)]
             for other in contig:
                 del self.contig[other]
             edited = set()
@@ -937,7 +950,7 @@ class Block:
             block.segments[key] = segments
         points = list(self.contig.keys())
         for point in points:
-            contig = frozenset(self.contig)
+            contig = frozenset(self.contig[point])
             i = point[0]
             while i < point[0]+self.unit:
                 j = point[1]
@@ -1059,8 +1072,8 @@ if __name__ == "__main__":
     cube.triangles = {face_index:Polyhedron.triangulation(cube.circuit(face_index)) for face_index,face in enumerate(cube.faces)}
     light_input_queue = mp.Queue()
     light_output_queue = mp.Queue()
-    light_process = mp.Process(target=process_lighting, args=(light_input_queue,light_output_queue)) 
-    light_process.start()
+    #light_process = mp.Process(target=process_lighting, args=(light_input_queue,light_output_queue)) 
+    #light_process.start()
     light_dict = dict()
     block = Block(3,3,3)
     #block = Block(5,5,5)
@@ -1185,7 +1198,7 @@ if __name__ == "__main__":
                             while not block.select_by_void():
                                 block.select[0] += direction*dir_mult1*block.unit
                         elif block.select[3] == 2:
-                            block.select[2] -= direction*dir_mult2*block.unit
+                            block.select[2] += direction*dir_mult2*block.unit
                             while not block.select_by_void():
                                 block.select[2] += direction*dir_mult2*block.unit
                         for i in [0,2]:
@@ -1243,29 +1256,14 @@ if __name__ == "__main__":
                                 k += block.unit
                             j += block.unit
                         i += block.unit
+                    i = min(block.select[0],block.select[0]+block.select_size[0])
+                    j = min(block.select[1],block.select[1]+block.select_size[1])
+                    k = min(block.select[2],block.select[2]+block.select_size[2])
+                    size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
                     if to_add:
-                        i = min(block.select[0],block.select[0]+block.select_size[0])
-                        j = min(block.select[1],block.select[1]+block.select_size[1])
-                        k = min(block.select[2],block.select[2]+block.select_size[2])
-                        size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
                         block.add_poly((i,j,k),size)
                     else:
-                        i,i_max = block.select[0],block.select[0]+block.select_size[0]
-                        if block.select_size[0] < 0:
-                            i,i_max = i_max,i
-                        while i < i_max:
-                            j,j_max = block.select[1],block.select[1]+block.select_size[1]
-                            if block.select_size[1] < 0:
-                                j,j_max = j_max,j
-                            while j < j_max:
-                                k,k_max = block.select[2],block.select[2]+block.select_size[2]
-                                if block.select_size[2] < 0:
-                                    k,k_max = k_max,k
-                                while k < k_max:
-                                    block.del_poly(i,j,k)
-                                    k += block.unit
-                                j += block.unit
-                            i += block.unit
+                        block.del_poly((i,j,k),size)
                     block.select = [block.select[0]+block.select_size[0]-block.unit,block.select[1]+block.select_size[1]-block.unit,block.select[2]+block.select_size[2]-block.unit,block.select[3]]
                     block.select_size = [block.unit,block.unit,block.unit]
             if event.type == pygame.MOUSEMOTION:
@@ -1325,7 +1323,7 @@ if __name__ == "__main__":
         dT = clock.tick(60) / 1000
         print(dT, len(block.polys), dir_mult1, dir_mult2, z_forward)
         dts.append(dT)
-    light_process.kill()
+    #light_process.kill()
     plt.plot(dts)
     plt.ylabel('time deltas')
     plt.show()
