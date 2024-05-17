@@ -647,6 +647,15 @@ class Block:
                 p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 pygame.draw.line(screen, (128,128,128), p1, p2)
+        if self.select[2] > 0:
+            shadow =  get_cube((self.select[0]+self.select_size[0]/2,self.select[1]+self.select_size[1]/2,0+self.select[2]/2), factors=(self.select_size[0],self.select_size[1],self.select[2]))
+            for edge in shadow.edges:
+                p1, p2 = tuple(shadow.verts[index] for index in edge)
+                p1, p2 = camera.project(p1), camera.project(p2)
+                if p1 and p2:
+                    p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                    p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                    pygame.draw.line(screen, (128,128,128), p1, p2)
         if self.select[1] > 0:
             shadow = get_cube((self.select[0]+self.select_size[0]/2,0+self.select[1]/2,self.select[2]+self.select_size[2]/2), factors=(self.select_size[0],self.select[1],self.select_size[2]))
             for edge in shadow.edges:

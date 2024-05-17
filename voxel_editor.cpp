@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <iostream>
+#include <chrono>
 
 using namespace Eigen;
 using namespace std;
@@ -175,7 +176,7 @@ class Polyhedron {
         while (queue.size()) {
             vector<int> path = queue.back();
             queue.pop_back();
-            for (const int& index : edges[path[path.size()-1]]) {
+            for (const int& index : edges[path.back()]) {
                 if (path.size() == 1 or edges[path[path.size()-2]].find(index) == edges[path[path.size()-2]].end()) {
                     std::array<double,3> point = verts[index];
                     for (const int& edge : edge_lookup[point]) {
@@ -193,9 +194,10 @@ class Polyhedron {
                                     }
                                 }
                                 vector<std::array<double,3>> points(point_set.begin(),point_set.end());
+
                                 if (Polyhedron::coplanar(points)) {
                                     set<int> edge_intersection;
-                                    set_intersection(edges[new_path[0]].begin(), edges[new_path[0]].end(), edges[new_path.back()].begin(),edges[new_path.back()].end(),inserter(edge_intersection, edge_intersection.begin()));
+                                    set_intersection(edges[new_path.front()].begin(), edges[new_path.front()].end(), edges[new_path.back()].begin(),edges[new_path.back()].end(),inserter(edge_intersection, edge_intersection.begin()));
                                     if (edge_intersection.size()) {
                                         cycles.insert(new_path);
                                     } else {
@@ -216,7 +218,7 @@ class Polyhedron {
             faces.push_back(temp);
         }
     }
-    vector<std::array<double,3>> circuit(int face_index) {
+    vector<std::array<double,3>> circuit(int face_index) const {
         set<int> face = faces[face_index];
         vector<std::array<double,3>> output;
         if (!face.size()) {
@@ -274,10 +276,14 @@ Polyhedron get_cube(std::array<double,3>displacement, std::array<double,3>factor
         polyhedron.construct_faces();
         return polyhedron;
 }
+Polyhedron get_cube(std::array<double,3>displacement, std::array<double,3>factors) {
+    return get_cube(displacement, factors, {0,0,0});
+}
 
 // Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
+Camera camera;
 
 class Crosshair {
   public:
@@ -288,6 +294,165 @@ class Crosshair {
         SDL_RenderDrawLine(gRenderer, pos[0]+SCREEN_WIDTH/2, -pos[1]+SCREEN_HEIGHT/2-10, pos[0]+SCREEN_WIDTH/2,-pos[1]+SCREEN_HEIGHT/2+10);
         }
 };
+
+int fill_polygon(SDL_Renderer* gRenderer, vector<std::array<double,2>> points) {
+    if (points.size() == 0) {
+        return 0;
+    }
+    if (points.size() == 1) {
+        return SDL_RenderDrawPoint(gRenderer, round(points.front()[0]), round(points.front()[1]));
+    }
+    double y0 = points[0][1];
+    double y1 = y0;
+    for (const std::array<double,2>& point : points) {
+        if (point[1] < y0) {
+            y0 = point[1];
+        }
+        if (point[1] > y1) {
+            y1 = point[1];
+        }
+    }
+    for (int y = round(y0); y <= round(y1); y++) {
+        int j = points.size()-1;
+        std::vector<int> xs;
+        for (int i= 0;  i < points.size();  j = i++) {
+            if ((points[i][1] < y && y <= points[j][1]) || (points[j][1] < y && y <= points[i][1])) {
+                // the x value of the vertex + the height delta between the vertex and the scanline *the reciprocal of the slope =
+                // the x value of the intersection of the preceding edge and the scanline 
+                xs.push_back(round(points[i][0] + (y-points[i][1]) * (points[i][0]-points[j][0]) / (points[i][1]-points[j][1]) ));
+            }
+            // sort the intersections, the new item bubbles up to its place
+            for (int k = xs.size()-1;  k && xs[k-1] > xs[k];  --k) {
+	            swap(xs[k-1], xs[k]);
+	        }
+        }
+        for (int i = 0; i < xs.size(); i += 2) {
+            SDL_RenderDrawLine(gRenderer, xs[i], y, xs[i+1], y);
+        }
+    }
+    return 0;
+}
+
+namespace voxel_editor {
+class Block {
+  public:
+    std::array<double,3> size;
+    Polyhedron block;
+    map<std::array<double,3>,set<std::array<double,3>>> contig;
+    map<set<std::array<double,3>>,set<std::array<double,3>>> segments;
+    map<set<std::array<double,3>>,Polyhedron> polys;
+    std::array<double,3> select = {0,0,0};
+    int select_dimension = 0;
+    double unit;
+    std::array<double,3> select_size;
+    Block(double width, double height, double depth, double unit) {
+        size = {width, height, depth};
+        block = get_cube({width/2,height/2,depth/2},{width,height,depth});
+        this->unit = unit;
+        select_size = {unit,unit,unit};
+    }
+    void draw(SDL_Renderer* gRenderer) {
+        SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
+        for (const set<int>& edge : block.edges) {
+            std::array<double,2> p1 = camera.project(block.verts[*(edge.begin())]);
+            std::array<double,2> p2 = camera.project(block.verts[*(++edge.begin())]);
+            p1[0] += SCREEN_WIDTH/2;
+            p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+            p2[0] += SCREEN_WIDTH/2;
+            p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+            SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+        }
+        for (const pair<set<std::array<double,3>>,Polyhedron>& p : polys) {
+            for (int face_index = 0; face_index < p.second.faces.size(); face_index++) {
+                vector<std::array<double,3>> points = p.second.circuit(face_index);
+                vector<std::array<double,2>> points_2D;
+                for (const std::array<double,3> point : points) {
+                    points_2D.push_back(camera.project(point));
+                    points_2D.back()[0] += SCREEN_WIDTH/2;
+                    points_2D.back()[1] = points_2D.back()[1]*-1+SCREEN_HEIGHT/2; 
+                }
+                fill_polygon(gRenderer, points_2D);
+            }
+            for (const set<int>& edge : p.second.edges) {
+                std::array<double,2> p1 = camera.project(p.second.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(p.second.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        double width = size[0];
+        double height = size[1];
+        double depth = size[2];
+        Polyhedron axes;
+        if (select_dimension == 0) {
+            axes = get_cube({width/2,unit/2+select[1],depth/2}, {width,unit,depth});
+        } else if (select_dimension == 1) {
+            axes = get_cube({width/2,height/2,unit/2+select[2]}, {width,height,unit});
+        } else if (select_dimension == 2) {
+            axes = get_cube({unit/2+select[0],height/2,depth/2}, {unit,height,depth});
+        }
+        for (const set<int>& edge : axes.edges) {
+            std::array<double,2> p1 = camera.project(axes.verts[*(edge.begin())]);
+            std::array<double,2> p2 = camera.project(axes.verts[*(++edge.begin())]);
+            p1[0] += SCREEN_WIDTH/2;
+            p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+            p2[0] += SCREEN_WIDTH/2;
+            p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+            SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+        }
+        Polyhedron select_cube = get_cube({select[0]+select_size[0]/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, select_size);
+        for (const set<int>& edge : select_cube.edges) {
+            std::array<double,2> p1 = camera.project(select_cube.verts[*(edge.begin())]);
+            std::array<double,2> p2 = camera.project(select_cube.verts[*(++edge.begin())]);
+            p1[0] += SCREEN_WIDTH/2;
+            p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+            p2[0] += SCREEN_WIDTH/2;
+            p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+            SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+        }
+        SDL_SetRenderDrawColor( gRenderer, 0x80, 0x80, 0x80, 0xFF );
+        if (select[2] > 0 ) {
+            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,select[1]+select_size[1]/2,0+select[2]/2}, {select_size[0],select_size[1],select[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        if (select[1] > 0 ) {
+            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,0+select[1]/2,select[2]+select_size[2]/2}, {select_size[0],select[1],select_size[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        if (select[0] > 0 ) {
+            Polyhedron shadow = get_cube({0+select[0]/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, {select[0],select_size[1],select_size[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+    }
+};
+}
 
 bool init();
 
@@ -351,17 +516,17 @@ int main( int argc, char* args[] ) {
     if( !init() ) {
         printf( "Failed to initialize!\n" );
     } else {
-        Camera camera;
         camera.zoom = 100;
         camera.focal[0] = 0;
         camera.focal[1] = 0;
-        camera.focal[2] = -5;
+        camera.focal[2] = -1000;
         Polyhedron cube = get_cube({0,0,-1},{1,1,1},{0,0,0});
         Crosshair crosshair;
         bool mouse_down = false;
         int mousedown_x;
         int mousedown_y;
         SDL_ShowCursor(SDL_DISABLE);
+        voxel_editor::Block block(3,3,3,1);
         // Main loop flag
         bool quit = false;
 
@@ -370,6 +535,7 @@ int main( int argc, char* args[] ) {
 
         // While application is running
         while( !quit ) {
+            auto start = std::chrono::high_resolution_clock::now();
             // Handle events on queue
             while( SDL_PollEvent( &e ) != 0 ) {
                 //User requests quit
@@ -401,18 +567,21 @@ int main( int argc, char* args[] ) {
             }
             SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
             SDL_RenderClear( gRenderer );
+            crosshair.draw(gRenderer);
             SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
             for (set<int> edge : cube.edges) {
                 std::array<double,3> p1 = cube.verts[*(edge.begin())];
                 std::array<double,3> p2 = cube.verts[*(++edge.begin())];
                 std::array<double,2> p1_2D = camera.project(p1);
                 std::array<double,2> p2_2D = camera.project(p2);
-                cout << p1_2D[0] << " " << p1_2D[1] << " " << p2_2D[0] << " " << p2_2D[1] << endl;
+                //cout << p1_2D[0] << " " << p1_2D[1] << " " << p2_2D[0] << " " << p2_2D[1] << endl;
                 SDL_RenderDrawLine( gRenderer, p1_2D[0]+SCREEN_WIDTH/2, p1_2D[1]*-1+SCREEN_HEIGHT/2, p2_2D[0]+SCREEN_WIDTH/2, p2_2D[1]*-1+SCREEN_HEIGHT/2 );
             }
-            crosshair.draw(gRenderer);
+            block.draw(gRenderer);
             //Update screen
             SDL_RenderPresent( gRenderer );
+            auto stop = std::chrono::high_resolution_clock::now();
+            cout << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() << " ms." << endl;
         }
     }
 }
