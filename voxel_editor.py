@@ -785,6 +785,7 @@ class Block:
         segments = self.segments[contig]
         segment_map = dict()
         for segment in segments:
+            print(segment, segments[segment])
             if segments[segment] % 2 == 1:
                 for point in segment:
                     if point not in segment_map:
@@ -852,10 +853,6 @@ class Block:
         faces = set()
         for value in face_map.values():
             faces.update(value)
-        for face in faces:
-            if len(face) == 3:
-                print(face)
-                sys.exit()
         verts = list(verts)
         edges = list(edges)
         poly = Polyhedron()
@@ -903,9 +900,9 @@ class Block:
                     other = (i+m*delta[0],j+m*delta[1],k+m*delta[2])
                     if other in contig and other not in visited:
                         queue.append(other)
+        segments = self.segments[frozenset(contig|removed)]
+        del self.segments[frozenset(contig|removed)]
         if len(visited) == len(contig):
-            segments = self.segments[frozenset(contig|removed)]
-            del self.segments[frozenset(contig|removed)]
             for i,j,k in removed:
                 for d1 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
                     segment = frozenset([(i,j,k),(i+d1[0],j+d1[1],k+d1[2])])
@@ -921,7 +918,7 @@ class Block:
                             segment = frozenset([(i+d2[0],j+d2[1],k+d2[2]),(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2])])
                             if segment not in segments:
                                 segments[segment] = 0
-                            segments[segment] += 1
+                            segments[segment] -= 1
                             for d3 in [(self.unit,0,0),(0,self.unit,0),(0,0,self.unit)]:
                                 if d1 != d3 and d2 != d3:
                                     segment = frozenset([(i+d1[0]+d2[0],j+d1[1]+d2[1],k+d1[2]+d2[2]),(i+d1[0]+d2[0]+d3[0],j+d1[1]+d2[1]+d3[1],k+d1[2]+d2[2]+d3[2])])
@@ -931,7 +928,6 @@ class Block:
             self.segments[frozenset(contig)] = segments
             self.construct_poly(frozenset(contig))
         else:      
-            del self.segments[frozenset(contig|removed)]
             for other in contig:
                 del self.contig[other]
             edited = set()
@@ -1095,6 +1091,7 @@ if __name__ == "__main__":
     space_down = False
     dir_mult1 = 1
     dir_mult2 = 1
+    dir_mult3 = 1
     z_forward = True
     while running:
         '''
@@ -1248,7 +1245,6 @@ if __name__ == "__main__":
                 if event.key == pygame.K_SPACE:
                     space_down = False
                     to_add = False
-                    i = block.select[0]
                     i,i_max = block.select[0],block.select[0]+block.select_size[0]
                     if block.select_size[0] < 0:
                         i,i_max = i_max,i
@@ -1334,7 +1330,7 @@ if __name__ == "__main__":
             pygame.draw.polygon(screen, light_dict[key], triangle)
         pygame.display.flip()
         dT = clock.tick(60) / 1000
-        print(dT, len(block.polys), dir_mult1, dir_mult2, z_forward)
+        print(dT, len(block.polys), dir_mult1, dir_mult2, dir_mult3, z_forward)
         dts.append(dT)
     #light_process.kill()
     plt.plot(dts)
