@@ -954,27 +954,27 @@ class Block:
                     point = tuple(point[i]+diff[i] for i in range(3))
             block.segments[key] = segments
         points = list(self.contig.keys())
-        for point in points:
-            contig = frozenset(self.contig[point])
-            i = point[0]
-            while i < point[0]+self.unit:
-                j = point[1]
-                while j < point[1]+self.unit:
-                    k = point[2]
-                    while k < point[2]+self.unit:
-                        if (i,j,k) not in block.contig[point]:
-                            block.contig[point].add((i,j,k))
-                            block.contig[(i,j,k)] = block.contig[point]
-                            if contig in block.segments:
-                                new_contig = frozenset(block.contig[point])
-                                block.segments[new_contig] = block.segments[contig]
-                                block.polys[new_contig] = block.polys[contig]
-                                del block.segments[contig]
-                                del block.polys[contig]
-                                contig = new_contig
-                        k += block.unit
-                    j += block.unit
-                i += block.unit
+        for contig in {frozenset(x) for x in self.contig.values()}:
+            for point in contig:
+                i = point[0]
+                while i < point[0]+self.unit:
+                    j = point[1]
+                    while j < point[1]+self.unit:
+                        k = point[2]
+                        while k < point[2]+self.unit:
+                            if (i,j,k) not in block.contig[point]:
+                                block.contig[point].add((i,j,k))
+                                block.contig[(i,j,k)] = block.contig[point]
+                            k += block.unit
+                        j += block.unit
+                    i += block.unit
+            if contig in block.segments:
+                new_contig = frozenset(block.contig[point])
+                block.segments[new_contig] = block.segments[contig]
+                block.polys[new_contig] = block.polys[contig]
+                del block.segments[contig]
+                del block.polys[contig]
+                contig = new_contig
 
         '''
         for key in self.contig:

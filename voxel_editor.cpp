@@ -197,14 +197,17 @@ class Polyhedron {
         map<std::array<double,3>,set<set<int>>> edge_lookup;
         for (const int& edge_index : face) {
             for (const int& index : edges[edge_index]) {
+                //cout << "index: " << index << " " << edge_index << " " << edges.size() << endl;
                 std::array<double,3> point = verts[index];
                 edge_lookup[point].insert(edges[edge_index]);
+                //cout << '[' << point[0] << "," << point[1] << "," << point[2] << "] " << edge_index << endl;
                 
             }
         }
         set<int> start = edges[*(face.begin())];
         set<int> previous = start;
         std::array<double,3> point = verts[*(start.begin())];
+        //cout << '[' << point[0] << "," << point[1] << "," << point[2] << "]" << endl;
         output.push_back(point);
         set<set<int>> set_diff;
         set<set<int>> temp = {start};
@@ -346,9 +349,9 @@ class Block {
   public:
     std::array<double,3> size;
     Polyhedron block;
-    map<std::array<double,3>,set<std::array<double,3>>> contig;
-    map<set<std::array<double,3>>,map<set<std::array<double,3>>,int>> segments;
-    map<set<std::array<double,3>>,Polyhedron> polys;
+    map<std::array<double,3>,set<std::array<double,3>>*> contig;
+    map<set<std::array<double,3>>,map<set<std::array<double,3>>,int>*> segments;
+    map<set<std::array<double,3>>,Polyhedron*> polys;
     std::array<double,3> select = {0,0,0};
     int select_dimension = 0;
     double unit;
@@ -371,9 +374,9 @@ class Block {
             SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
         }
         SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
-        for (const pair<set<std::array<double,3>>,Polyhedron>& p : polys) {
-            for (int face_index = 0; face_index < p.second.faces.size(); face_index++) {
-                vector<std::array<double,3>> points = p.second.circuit(face_index);
+        for (const pair<set<std::array<double,3>>,Polyhedron*>& p : polys) {
+            for (int face_index = 0; face_index < p.second->faces.size(); face_index++) {
+                vector<std::array<double,3>> points = p.second->circuit(face_index);
                 vector<std::array<double,2>> points_2D;
                 for (const std::array<double,3> point : points) {
                     points_2D.push_back(camera.project(point));
@@ -384,10 +387,10 @@ class Block {
             }
         }
         SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
-        for (const pair<set<std::array<double,3>>,Polyhedron>& p : polys) {
-            for (const set<int>& edge : p.second.edges) {
-                std::array<double,2> p1 = camera.project(p.second.verts[*(edge.begin())]);
-                std::array<double,2> p2 = camera.project(p.second.verts[*(++edge.begin())]);
+        for (const pair<set<std::array<double,3>>,Polyhedron*>& p : polys) {
+            for (const set<int>& edge : p.second->edges) {
+                std::array<double,2> p1 = camera.project(p.second->verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(p.second->verts[*(++edge.begin())]);
                 p1[0] += SCREEN_WIDTH/2;
                 p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
                 p2[0] += SCREEN_WIDTH/2;
@@ -466,18 +469,10 @@ class Block {
         }
     }
     void construct_poly(set<std::array<double,3>> cont) {
-        map<set<std::array<double,3>>,int>seg = segments[cont];
+        map<set<std::array<double,3>>,int>seg = *segments[cont];
         map<std::array<double,3>,set<set<std::array<double,3>>>> segment_map;
         for (const pair<set<std::array<double,3>>,int>& p : seg) {
-            for (const std::array<double,3> point : p.first) {
-                cout << "[";
-                for (const double& coord : point) {
-                    cout << coord << ",";
-                }
-                cout << "] ";
-            }
-            cout << p.second << endl;
-            if (abs(p.second % 2) == 1) {
+            if ((p.second+4) % 2 == 1) {
                 for (const std::array<double,3> point : p.first) {
                     segment_map[point].insert(p.first);
                 }
@@ -499,9 +494,7 @@ class Block {
                         vector<std::array<double,3>> points(point_set.begin(),point_set.end());
                         if (segment1 != segment2 && Polyhedron::colinear(points)) {
                             vector<std::array<double,3>> temp;
-                            cout << segment1.size() << " " << segment2.size() << endl;
                             set_symmetric_difference(segment1.begin(),segment1.end(),segment2.begin(),segment2.end(),inserter(temp, temp.begin()));
-                            cout << "segment 3 " << temp.size() << endl;
                             set<std::array<double,3>> segment3(temp.begin(),temp.end());
                             found = true;
                             seg1.insert(segment1.begin(),segment1.end());
@@ -529,10 +522,16 @@ class Block {
             }
         }
         set<set<std::array<double,3>>> edges;
+        set<std::array<double,3>> to_remove;
         for (const pair<std::array<double,3>,set<set<std::array<double,3>>>>& p : segment_map) {
             if (p.second.size()) {
                 edges.insert(p.second.begin(),p.second.end());
+            } else {
+                to_remove.insert(p.first);
             }
+        }
+        for (const std::array<double,3> x : to_remove) {
+            segment_map.erase(x);
         }
         set<std::array<double,3>> verts;
         for (const set<std::array<double,3>>& edge : edges) {
@@ -600,7 +599,7 @@ class Block {
         }
         vector<std::array<double,3>> verts_vector(verts.begin(),verts.end());
         vector<set<std::array<double,3>>> edges_vector(edges.begin(),edges.end());
-        Polyhedron poly;
+        Polyhedron* poly = new Polyhedron();
         
         for (const set<set<std::array<double,3>>>& face : faces) {
             set<int> temp;
@@ -608,7 +607,7 @@ class Block {
                 vector<set<std::array<double,3>>>::iterator it = find(edges_vector.begin(),edges_vector.end(), edge);
                 temp.insert(it - edges_vector.begin());
             }
-            poly.faces.push_back(temp);
+            poly->faces.push_back(temp);
         }
         for (const set<std::array<double,3>>& edge : edges) {
             set<int> temp;
@@ -616,9 +615,9 @@ class Block {
                 vector<std::array<double,3>>::iterator it = find(verts_vector.begin(),verts_vector.end(),vert);
                 temp.insert(it - verts_vector.begin());
             }
-            poly.edges.push_back(temp);
+            poly->edges.push_back(temp);
         }
-        poly.verts = verts_vector;
+        poly->verts = verts_vector;
         polys[cont] = poly; 
     }
     void add_poly(std::array<double,3>pos, std::array<double,3>size, bool reconstruct) {
@@ -626,19 +625,20 @@ class Block {
         for(double i = pos[0]; i < pos[0]+size[0]; i+= unit) {
             for(double j = pos[1]; j < pos[1]+size[1]; j+= unit) {
                 for(double k = pos[2]; k < pos[2]+size[2]; k+= unit) {
-                    contig[{i,j,k}].insert({i,j,k});
+                    contig[{i,j,k}] = new set<std::array<double,3>>;
+                    contig[{i,j,k}]->insert({i,j,k});
                     const vector<std::array<double,3>> deltas = {{unit,0,0},{0,unit,0},{0,0,unit}};
                     const std::array<int,2> multipliers = {-1,1};
                     for (const std::array<double,3>& delta : deltas) {
                         for (const int& m : multipliers) {
                             std::array<double,3> other = {i+m*delta[0],j+m*delta[1],k+m*delta[2]};
-                            cout << other[0] << " " << other[1] << " " << other[2] << endl;
                             if (contig.find(other) != contig.end() && contig[{i,j,k}] != contig[other]) {
-                                set<std::array<double,3>> temp(contig[other].begin(),contig[other].end());
+                                //cout << i << " " << j << " " << k << " other: " << other[0] << " " << other[1] << " " << other[2] << endl;
+                                set<std::array<double,3>> temp(contig[other]->begin(),contig[other]->end());
                                 edited.insert(temp);
-                                contig[other].insert(contig[{i,j,k}].begin(),contig[{i,j,k}].end());
+                                contig[other]->insert(contig[{i,j,k}]->begin(),contig[{i,j,k}]->end());
                                 contig[{i,j,k}] = contig[other];
-                                for (const std::array<double,3>& other : contig[{i,j,k}]) {
+                                for (const std::array<double,3>& other : *contig[{i,j,k}]) {
                                     contig[other] = contig[{i,j,k}];
                                 } 
                             }
@@ -647,16 +647,15 @@ class Block {
                 }
             }
         }
-        cout << "edited " << edited.size() << endl;
-        set<std::array<double,3>>cont = contig[pos];
-        map<set<std::array<double,3>>,int> seg;
+        set<std::array<double,3>>cont = *contig[pos];
+        map<set<std::array<double,3>>,int>* seg = new map<set<std::array<double,3>>,int>;
         for (const set<std::array<double,3>>& e : edited) {
             if (polys.find(e) != polys.end()) {
                 polys.erase(e);
             }
             if (segments.find(e) != segments.end()) {
-                for(const pair<set<std::array<double,3>>,int>& p : segments[e]) {
-                    seg[p.first] += p.second;
+                for(const pair<set<std::array<double,3>>,int>& p : *segments[e]) {
+                    (*seg)[p.first] += p.second;
                 }
             }
         }
@@ -666,8 +665,8 @@ class Block {
             while (p[i1] < start[i1]+size[i1]) { 
                 std::array<double,3> end = {p[0], p[1], p[2]};
                 end[i1] += unit;
-                set<std::array<double,3>>segment = {pos,end};
-                seg[segment] += 1;
+                set<std::array<double,3>>segment = {p,end};
+                (*seg)[segment] += 1;
                 p[i1] += unit;
             }
             for (int i2 = 0; i2 < 3; i2++) {
@@ -679,7 +678,7 @@ class Block {
                         std::array<double,3> end = {p[0], p[1], p[2]};
                         end[i2] += unit;
                         set<std::array<double,3>>segment = {p,end};
-                        seg[segment] += 1;
+                        (*seg)[segment] += 1;
                         p[i2] += unit;
                     }
                     p[0] = pos[0], p[1] = pos[1], p[2] = pos[2];
@@ -689,7 +688,7 @@ class Block {
                         std::array<double,3> end = {p[0], p[1], p[2]};
                         end[i1] += unit;
                         set<std::array<double,3>>segment = {p,end};
-                        seg[segment] += 1;
+                        (*seg)[segment] += 1;
                         p[i1] += unit;
                     }
                     for (int i3 = 0; i3 < 3; i3++) {
@@ -702,7 +701,7 @@ class Block {
                                 std::array<double,3> end = {p[0], p[1], p[2]};
                                 end[i3] += unit;
                                 set<std::array<double,3>>segment = {p,end};
-                                seg[segment] += 1;
+                                (*seg)[segment] += 1;
                                 p[i3] += unit;
                             }
                         }
@@ -711,25 +710,26 @@ class Block {
             }
         }
         segments[cont] = seg;
+        cout << segments.size() << endl;
         if (reconstruct) {
             this->construct_poly(cont);
         }
     }
     void del_poly(std::array<double,3> pos, std::array<double,3> size) {
         cout << "hello" << endl;
-        set<std::array<double,3>> cont = contig[pos];
-        polys.erase(cont);
+        set<std::array<double,3>>* cont = contig[pos];
+        polys.erase(*cont);
         set<std::array<double,3>> removed;
         for (double i=pos[0]; i < pos[0]+size[0]; i += unit) {
             for (double j=pos[1]; j < pos[1]+size[1]; j += unit) {
                 for (double k=pos[2]; k < pos[2]+size[2]; k += unit) {
                     contig.erase({i,j,k});
-                    cont.erase({i,j,k});
+                    cont->erase({i,j,k});
                     removed.insert({i,j,k});
                 }    
             }    
         }
-        /*set<std::array<double,3>> visited;
+        set<std::array<double,3>> visited;
         vector<std::array<double,3>> queue;
         bool triple_break = false;
         for (const std::array<double,3>& item : removed) {
@@ -738,7 +738,7 @@ class Block {
             for (const std::array<double,3>& delta : deltas) {
                 for (const int& m : multipliers) {
                     std::array<double,3> other = {item[0]+m*delta[0],item[1]+m*delta[1],item[2]+m*delta[2]};
-                    if (cont.find(other) != cont.end()) {
+                    if (cont->find(other) != cont->end()) {
                         queue.push_back(other);
                         triple_break = true;
                         break;
@@ -761,53 +761,57 @@ class Block {
             for (const std::array<double,3>& delta : deltas) {
                 for (const int& m : multipliers) {
                     std::array<double,3> other = {item[0]+m*delta[0],item[1]+m*delta[1],item[2]+m*delta[2]};
-                    if (cont.find(other) != cont.end() and visited.find(other) == visited.end()) {
+                    if (cont->find(other) != cont->end() and visited.find(other) == visited.end()) {
                         queue.push_back(other);
                     }
                 }
             }
-        }*/
-        set<std::array<double,3>> cont2(cont.begin(),cont.end());
+        }
+        set<std::array<double,3>> cont2(cont->begin(),cont->end());
         cont2.insert(removed.begin(),removed.end()); 
-        map<set<std::array<double,3>>,int> segs = segments[cont2];
+        map<set<std::array<double,3>>,int>* segs = segments[cont2];
         segments.erase(cont2);
-        //if (visited.size() == cont.size()) {
-        if (false) {
+        if (visited.size() == cont->size()) {
             const vector<std::array<double,3>> deltas = {{unit,0,0},{0,unit,0},{0,0,unit}};
             for (const std::array<double,3>& item : removed) {
                 for (const std::array<double,3>& d1 : deltas) {
                     set<std::array<double,3>> seg = {item, {item[0]+d1[0],item[1]+d1[1],item[2]+d1[2]}};
-                    segs[seg] -= 1;
+                    (*segs)[seg] -= 1;
                     for (const std::array<double,3>& d2 : deltas) {
-                        if (d1[0] < d2[0] || (d1[0] == d2[0] && d1[1] < d2[1]) || (d1[0] == d2[0] && d1[1] == d2[1] && d1[2] < d2[2]) ) {
+                        if (d1[0] < d2[0] || (d1[0] == d2[0] && d1[1] < d2[1]) ) {
+                            cout << d1[0] << d1[1] << d1[2] << endl;
+                            cout << d2[0] << d2[1] << d2[2] << endl;
                             set<std::array<double,3>> seg1 = {{item[0]+d1[0],item[1]+d1[1],item[2]+d1[2]},{item[0]+d1[0]+d2[0],item[1]+d1[1]+d2[1],item[2]+d1[2]+d2[2]}};
-                            segs[seg1] -= 1;
+                            (*segs)[seg1] -= 1;
                             set<std::array<double,3>> seg2 = {{item[0]+d2[0],item[1]+d2[1],item[2]+d2[2]},{item[0]+d1[0]+d2[0],item[1]+d1[1]+d2[1],item[2]+d1[2]+d2[2]}};
-                            segs[seg2] -= 1;
+                            (*segs)[seg2] -= 1;
                             for (const std::array<double,3>& d3 : deltas) {
                                 if (d1 != d3 && d2 != d3) {
+                                    //cout << d1[0] << d1[1] << d1[2] << endl;
+                                    //cout << d2[0] << d2[1] << d2[2] << endl;
+                                    //cout << d3[0] << d3[1] << d3[2] << endl;
                                     set<std::array<double,3>> seg = {{item[0]+d1[0]+d2[0],item[1]+d1[1]+d2[1],item[2]+d1[2]+d2[2]},{item[0]+d1[0]+d2[0]+d3[0],item[1]+d1[1]+d2[1]+d3[1],item[2]+d1[2]+d2[2]+d3[2]}};
-                                    segs[seg] -= 1;
+                                    (*segs)[seg] -= 1;
                                 }
                             }
                         }
                     }
                 }
             }
-            segments[cont] = segs;
-            this->construct_poly(cont);
+            segments[*cont] = segs;
+            this->construct_poly(*cont);
         } else {
-            for (const std::array<double,3>& other : cont) {
+            for (const std::array<double,3>& other : *cont) {
                 contig.erase(other);
             }
             set<std::array<double,3>> edited;
-            for (const std::array<double,3>& other : cont) {
+            for (const std::array<double,3>& other : *cont) {
                 this->add_poly(other,{unit,unit,unit},false);
                 edited.insert(other);
             }
             set<set<std::array<double,3>>> temp;
             for (const std::array<double,3>& other : edited) {
-                temp.insert(contig[other]);
+                temp.insert(*contig[other]);
             }
             for (const set<std::array<double,3>>& c : temp) {
                 this->construct_poly(c);
@@ -820,15 +824,17 @@ class Block {
         b.contig = contig;
         b.select = select;
         b.polys = polys;
-        for (const pair<set<std::array<double,3>>,map<set<std::array<double,3>>,int>>& p1 : segments) {
-            map<set<std::array<double,3>>,int> segs;
-            for (const pair<set<std::array<double,3>>,int>& p2 : p1.second) {
+        for (const pair<set<std::array<double,3>>,map<set<std::array<double,3>>,int>*>& p1 : segments) {
+            map<set<std::array<double,3>>,int>* segs = new map<set<std::array<double,3>>,int>;
+            for (const pair<set<std::array<double,3>>,int>& p2 : *p1.second) {
                 std::array<double,3> point1 = *(p2.first.begin());
-                std::array<double,3> point2 = *(p2.first.begin()++);
+                std::array<double,3> point2 = *(++p2.first.begin());
                 std::array<double,3> diff = {(point2[0]-point1[0])/divisor,(point2[1]-point1[1])/divisor,(point2[2]-point1[2])/divisor};
                 while (point1 != point2) {
+                    cout << point1[0] << " " << point1[1] << " " << point1[2] << " ";
+                    cout << point2[0] << " " << point2[1] << " " << point2[2] << endl;
                     set<std::array<double,3>> seg = {point1, {point1[0]+diff[0], point1[1]+diff[1], point1[2]+diff[2]}};
-                    segs[seg] = p2.second;
+                    (*segs)[seg] = p2.second;
                     point1[0] += diff[0];
                     point1[1] += diff[1];
                     point1[2] += diff[2];
@@ -836,25 +842,31 @@ class Block {
             }
             b.segments[p1.first] = segs;
         }
-        for (pair<std::array<double,3>,set<std::array<double,3>>> p : contig) {
-            set<std::array<double,3>> cont = p.second;
-            for (double i = p.first[0]; i < p.first[0]+unit; i += b.unit) {
-                for (double j = p.first[1]; j < p.first[1]+unit; i += b.unit) {
-                    for (double k = p.first[2]; k < p.first[2]+unit; i += b.unit) {
-                        if (b.contig.find({i,j,k}) == b.contig.end()) {
-                            b.contig[p.first].insert({i,j,k});
-                            b.contig[{i,j,k}] = b.contig[p.first];
-                            if (b.segments.find(cont) != b.segments.end()) {
-                                set<std::array<double,3>> new_cont = b.contig[p.first];
-                                b.segments[new_cont] = b.segments[cont];
-                                b.polys[new_cont] = b.polys[cont];
-                                b.segments.erase(cont);
-                                b.polys.erase(cont);
-                                cont = new_cont;
+        set<set<std::array<double,3>>> contiguous;
+        for (pair<std::array<double,3>,set<std::array<double,3>>*> p : contig) {
+            cout << p.first[0] << " " << p.first[1] << " " << p.first[2] << endl;
+            contiguous.insert(*(p.second));
+        }
+        for (const set<std::array<double,3>>& cont : contiguous) {
+            for (const std::array<double,3>& point : cont) {
+                for (double i = point[0]; i < point[0]+unit; i += b.unit) {
+                    for (double j = point[1]; j < point[1]+unit; j += b.unit) {
+                        for (double k = point[2]; k < point[2]+unit; k += b.unit) {
+                            cout << i << " " << j << " " << k << endl;
+                            if (b.contig.find({i,j,k}) == b.contig.end()) {
+                                b.contig[point]->insert({i,j,k});
+                                b.contig[{i,j,k}] = b.contig[point];
                             }
                         }
                     }
                 }
+            }
+            if (b.segments.find(cont) != b.segments.end()) {
+                set<std::array<double,3>>* new_cont = b.contig[*(cont.begin())];
+                b.segments[*new_cont] = b.segments[cont];
+                b.polys[*new_cont] = b.polys[cont];
+                b.segments.erase(cont);
+                b.polys.erase(cont);
             }
         }
         return b;
@@ -868,7 +880,7 @@ class Block {
         for (const std::array<double,3>& delta : deltas) {
             for (const int& m : multipliers) {
                 std::array<double,3> other = {select[0]+m*delta[0],select[1]+m*delta[1],select[2]+m*delta[2]};
-                if (contig.find(other) != contig.end()) {
+                if (contig.find(other) == contig.end()) {
                     return true;
                 }
             }
@@ -943,7 +955,7 @@ int main( int argc, char* args[] ) {
         camera.zoom = 100;
         camera.focal[0] = 0;
         camera.focal[1] = 0;
-        camera.focal[2] = 1000;
+        camera.focal[2] = -100;
         Polyhedron cube = get_cube({0,0,-1},{1,1,1},{0,0,0});
         Crosshair crosshair;
         bool mouse_down = false;
@@ -1038,7 +1050,7 @@ int main( int argc, char* args[] ) {
                         break;
                         
                         case SDLK_LSHIFT:
-                        block.select_dimension = (block.select_dimension-1)%3;
+                        block.select_dimension = (block.select_dimension+3-1)%3;
                         break;
                         
                         case SDLK_RSHIFT:
@@ -1060,16 +1072,24 @@ int main( int argc, char* args[] ) {
                         case SDLK_LEFT:
                         direction = -1;
                         break;
+                        
+                        case SDLK_2:
+                        block = block.subdivide(2);
+                        break;
+
+                        case SDLK_3:
+                        block = block.subdivide(3);
+                        break;
 
                         default:
                         break;
                     }
                     int dir_mult1 = 1;
-                    if (Polyhedron::dot(camera.forward_vector(),{0,0,1}) > Polyhedron::dot(camera.forward_vector(),{0,0,-1})) {
+                    if (Polyhedron::dot(camera.forward_vector(),{0,0,1}) < Polyhedron::dot(camera.forward_vector(),{0,0,-1})) {
                         dir_mult1 = -1;
                     }
                     int dir_mult2 = 1;
-                    if (Polyhedron::dot(camera.forward_vector(),{1,0,0}) > Polyhedron::dot(camera.forward_vector(),{-1,0,0})) {
+                    if (Polyhedron::dot(camera.forward_vector(),{1,0,0}) < Polyhedron::dot(camera.forward_vector(),{-1,0,0})) {
                         dir_mult2 = -1;
                     }
                     int dir_mult3 = 1;
@@ -1169,12 +1189,12 @@ int main( int argc, char* args[] ) {
                                 if (block.select_size[index] == 0) {
                                     block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(2*(int)(z_forward)-1)*(1-2*(int)(z_forward && dir_mult1 != dir_mult2));
                                 }
-                            } else if (block.select[3] == 1) {
+                            } else if (block.select_dimension == 1) {
                                 block.select_size[0] += direction*dir_mult1*block.unit;
                                 if (block.select_size[0] == 0) {
                                     block.select_size[0] = direction*dir_mult1*block.unit;
                                 }
-                            } else if (block.select[3] == 2) {
+                            } else if (block.select_dimension == 2) {
                                 block.select_size[2] -= direction*dir_mult2*block.unit;
                                 if (block.select_size[2] == 0) {
                                     block.select_size[2] = -direction*dir_mult2*block.unit;
