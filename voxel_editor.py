@@ -12,6 +12,8 @@ import warnings
 warnings.simplefilter("ignore")
 import matplotlib.pyplot as plt
 import operator
+import sys
+import pickle
 
 def shift(points, displacement=(0,0,0)):
     output = []
@@ -945,6 +947,7 @@ class Block:
         for key in self.segments:
             segments = dict()
             for segment in self.segments[key]:
+                print(segment)
                 low, high = min(segment), max(segment)
                 diff = ((high[0]-low[0])/divisor,(high[1]-low[1])/divisor,(high[2]-low[2])/divisor)
                 point = low
@@ -956,6 +959,7 @@ class Block:
         points = list(self.contig.keys())
         for contig in {frozenset(x) for x in self.contig.values()}:
             for point in contig:
+                print(point)
                 i = point[0]
                 while i < point[0]+self.unit:
                     j = point[1]
@@ -1082,6 +1086,8 @@ if __name__ == "__main__":
     #light_process.start()
     light_dict = dict()
     block = Block(3,3,3)
+    if len(sys.argv) > 1:
+        block = pickle.load(open(sys.argv[1],'rb'))
     #block = Block(5,5,5)
     #block.block[1][4][2] = 1
     dts = []
@@ -1138,6 +1144,9 @@ if __name__ == "__main__":
                     block = block.subdivide(2)
                 if event.key == pygame.K_3:
                     block = block.subdivide(3)
+                if event.key == pygame.K_BACKSPACE:
+                    filename = input("Input filename: ")
+                    pickle.dump(block, open(filename,'wb'))
                 dir_mult1 = 1
                 if dot(camera.forward_vector(),(0,0,1)) < dot(camera.forward_vector(),(0,0,-1)):
                     dir_mult1 = -1
@@ -1205,9 +1214,9 @@ if __name__ == "__main__":
                             while not block.select_by_void():
                                 block.select[0] += direction*dir_mult1*block.unit
                         elif block.select[3] == 2:
-                            block.select[2] += direction*dir_mult2*block.unit
+                            block.select[2] -= direction*dir_mult2*block.unit
                             while not block.select_by_void():
-                                block.select[2] += direction*dir_mult2*block.unit
+                                block.select[2] -= direction*dir_mult2*block.unit
                         for i in [0,2]:
                             if block.select[i] > block.size[i]-block.unit:
                                 block.select[i] = block.size[i]-block.unit

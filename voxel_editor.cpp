@@ -291,8 +291,8 @@ Polyhedron get_cube(std::array<double,3>displacement, std::array<double,3>factor
 }
 
 // Screen dimension constants
-const int SCREEN_WIDTH = 640;
-const int SCREEN_HEIGHT = 480;
+const int SCREEN_WIDTH = 1280;//640;
+const int SCREEN_HEIGHT = 960;//480;
 Camera camera;
 
 class Crosshair {
