@@ -32,12 +32,30 @@ def rotate(points, angles=(0,0,0)):
         p = (p[0]*cos(angles[2])-p[1]*sin(angles[2]),p[0]*sin(angles[2])+p[1]*cos(angles[2]),p[2])
         output.append(p)
     return output
-def round_point(point):
-    return tuple(float(round(x*1000)/1000) for x in point)
-def round_edge(edge):
-    return frozenset(round_point(x) for x in edge)
 def round_float(x):
     return float(round(x*1000)/1000)
+def round_point(point):
+    return tuple(round_float(x) for x in point)
+def round_edge(edge):
+    return frozenset(round_point(x) for x in edge)
+def round_float_meter(x, meters=None):
+    if meters is None:
+        meters = {1}
+    mindiff = (float('inf'), None)
+    for y in meters:
+        diff = abs(x/y - round(x/y))
+        if diff < mindiff[0]:
+            mindiff = (diff, round(x/y)*y)
+    return float(mindiff[1])
+def round_point_meter(x, meters=None):
+    return tuple(round_float_meter(y, meters) for y in x)
+def round_edge_meter(edge, meters=None):
+    return frozenset(round_point_meter(x,meters) for x in edge)
+def remeter(meters, new_meter, precision=0.001):
+    for x in meters:
+        if x != 1 and abs(new_meter/x - round(new_meter/x)) <= precision:
+            return meters
+    return {x for x in meters if abs(x/new_meter - round(x/new_meter)) > precision}|set([new_meter])
 def distance(point1, point2):
     displacement = tuple(point2[i]-x for i,x in enumerate(point1))
     return sqrt(sum(x**2 for x in displacement))
@@ -207,17 +225,26 @@ class Box:
         return False
 
     def inside_polyhedron(poly, point):
+        print('inside_polyhedron_start')
         intersections = 0
         for face_index,face in enumerate(poly.faces):
             circuits = poly.circuits(face_index)
             circuit = Polyhedron.circuit_cut(circuits)
             interior_circuits = circuits - set([Polyhedron.find_exterior_circuit(circuits)])
+            if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0]:
+                if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
+                    return True
+            if circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1]:
+                if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
+                    return True
             if circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] > point[2]:
                 projection = (point[0],point[1],circuit[0][2])
                 if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)) and not any(Polyhedron.inside_triangle(y,projection) for x in interior_circuits for y in Polyhedron.triangulate(x)):
+                    print('inside_polyhedron', circuit, interior_circuits)
                     intersections += 1
                 if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
                     return True
+        print('inside_polyhedron_end')
         return intersections % 2 == 1
     
     def delete_circuit_helper(path_edges, start=None, previous=None, current=None, path=None, seen=None):
@@ -283,7 +310,405 @@ class Box:
         '''
         return circuits
 
-
+    def delete_preprocess(self, poly, face_index):
+        start_time_face = time.time()
+        face = poly.faces[face_index]
+        #print(face)
+        circuit = Polyhedron.circuit_cut(poly.circuits(face_index))
+        #print('circuit', circuit)
+        new_edges = set()
+        path_edges = set()
+        #print(face)
+        #print('circuit', circuit)
+        box = []
+        box_i = None
+        if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0] and circuit[0][0] >= self.x_min and circuit[0][0] <= self.x_max:
+            box = [(circuit[0][0], self.y_min, self.z_min),(circuit[0][0], self.y_max, self.z_min),(circuit[0][0], self.y_max, self.z_max),(circuit[0][0], self.y_min, self.z_max)]
+        elif circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1] and circuit[0][1] >= self.y_min and circuit[0][1] <= self.y_max:
+            box = [(self.x_min, circuit[0][1], self.z_min),(self.x_max, circuit[0][1], self.z_min),(self.x_max, circuit[0][1], self.z_max),(self.x_min, circuit[0][1], self.z_max)]
+        elif circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] >= self.z_min and circuit[0][2] <= self.z_max:
+            box = [(self.x_min, self.y_min, circuit[0][2]),(self.x_max, self.y_min, circuit[0][2]),(self.x_max, self.y_max, circuit[0][2]),(self.x_min, self.y_max, circuit[0][2])]
+        if all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for i,x in enumerate(circuit)):
+            double_break = False
+            for p1 in circuit:
+                if p1 in poly.verts:
+                    for edge in {frozenset(poly.verts[index] for index in edge) for edge in poly.edges}:
+                        intersection = 0
+                        if p1 in edge:
+                            p2 = list(edge - frozenset([p1]))[0]
+                            if p2 not in circuit:
+                                dim = [p1[i]!=p2[i] for i in range(3)].index(True)
+                                vec = tuple(p2[i]-p1[i] for i in range(3))
+                                for w in [(self.x_min,self.x_max),(self.y_min,self.y_max),(self.z_min,self.z_max)][dim]:
+                                    if dim == 0:
+                                        triangles = [[(w,self.y_min,self.z_min),(w,self.y_max,self.z_min),(w,self.y_max,self.z_max)],[(w,self.y_min,self.z_min),(w,self.y_min,self.z_max),(w,self.y_max,self.z_max)]]
+                                    if dim == 1:
+                                        triangles = [[(self.x_min,w,self.z_min),(self.x_max,w,self.z_min),(self.x_max,w,self.z_max)],[(self.x_min,w,self.z_min),(self.x_min,w,self.z_max),(self.x_max,w,self.z_max)]]
+                                    if dim == 2:
+                                            triangles = [[(self.x_min,self.y_min,w),(self.x_max,self.y_min,w),(self.x_max,self.y_max,w)],[(self.x_min,self.y_min,w),(self.x_min,self.y_max,w),(self.x_max,self.z_max,w)]]
+                                    if vec[dim] > 0:
+                                        if w > p1[dim]:
+                                            projection = [p1[0],p1[1],p1[2]]
+                                            projection[dim] = w
+                                            projection = tuple(projection)
+                                            if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
+                                                intersection += 1
+                                    else:
+                                        if w < p1[dim]:
+                                            projection = [p1[0],p1[1],p1[2]]
+                                            projection[dim] = w
+                                            projection = tuple(projection)
+                                            if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
+                                                intersection += 1
+                        if intersection%2 == 0:
+                            double_break = True
+                            break
+                    if double_break:
+                        break
+            else:
+                print('face processing time', face_index, time.time()-start_time_face)
+                return new_edges, path_edges, box_i
+        intersections = []
+        for i,x in enumerate(circuit):
+            if not any(circuit[i-1] in y and x in y for y in poly.circuits(face_index)):
+                continue
+            p1 = circuit[i-1]
+            p2 = x
+            last_intersections = []
+            for j, box_point in enumerate(box):
+                if not Box.colinear(set([p1,p2,box[j-1],box_point])):
+                    for intersection in Box.intersect_segments(frozenset([p1,p2]),frozenset([box[j-1],box_point])):
+                        #print("intersection", intersection, p1, p2)
+                        last_intersections.append(intersection)
+                else:
+                    if Box.point_on_segment(frozenset([box[j-1],box_point]),p1) and Box.point_on_segment(frozenset([box[j-1],box_point]),p2):
+                        if p1 not in box:
+                            last_intersections.append(p1)
+                        if p2 not in box:
+                            last_intersections.append(p2)
+            #print('last intersections', last_intersections)
+            if len(last_intersections) == 0:
+                new_edges.add(frozenset([p1,p2]))
+            elif len(last_intersections) == 1:
+                if (self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max):
+                    last_intersections[-1] = (last_intersections[-1],False)
+                    #print("intersection p2", p2, last_intersections[0][0])
+                    if len(frozenset([p2,last_intersections[0][0]])) == 2:
+                        new_edges.add(frozenset([p2,last_intersections[0][0]]))
+                    if (last_intersections[0][0], True) in intersections:
+                        intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
+                    elif (last_intersections[0][0], False) in intersections:
+                        intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
+                    elif (last_intersections[0][0], None) in intersections:
+                        intersections[intersections.index((last_intersections[0][0], None))] = last_intersections[0]
+                    else:
+                        intersections.extend(last_intersections)
+                elif (self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max):
+                    last_intersections[-1] = (last_intersections[-1],True)
+                    #print("intersection p1", p1, last_intersections[0][0])
+                    if len(frozenset([p1,last_intersections[0][0]])) == 2:
+                        new_edges.add(frozenset([p1,last_intersections[0][0]]))
+                    if (last_intersections[0][0], True) in intersections:
+                        intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
+                    elif (last_intersections[0][0], False) in intersections:
+                        #intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
+                        pass
+                    elif (last_intersections[0][0], None) in intersections:
+                        intersections[intersections.index((last_intersections[0][0], None))] = last_intersections[0]
+                    else:
+                        intersections.extend(last_intersections)
+            elif len(last_intersections) == 2:
+                last_intersections = [y[1] for j,y in enumerate(sorted((distance(p1,x),x) for x in last_intersections))]
+                if ((self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max)) and ((self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max)):
+                    last_intersections[-1] = (last_intersections[-1], False)
+                    last_intersections[-2] = (last_intersections[-2], True)
+                    if len(frozenset([p1,last_intersections[0][0]])) == 2:
+                        new_edges.add(frozenset([p1,last_intersections[0][0]]))
+                    if len(frozenset([p2,last_intersections[-1][0]])) == 2:
+                        new_edges.add(frozenset([p2,last_intersections[-1][0]]))
+                elif (self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max):
+                    last_intersections[-1] = (last_intersections[-1], None)
+                    last_intersections[-2] = (last_intersections[-2], True)
+                    if len(frozenset([p1,last_intersections[0][0]])) == 2:
+                        new_edges.add(frozenset([p1,last_intersections[0][0]]))
+                elif (self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max):
+                    last_intersections[-1] = (last_intersections[-1], False)
+                    last_intersections[-2] = (last_intersections[-2], None)
+                    if len(frozenset([p2,last_intersections[-1][0]])) == 2:
+                        new_edges.add(frozenset([p2,last_intersections[-1][0]]))
+                else:
+                    last_intersections[-1] = (last_intersections[-1], None)
+                    last_intersections[-2] = (last_intersections[-2], None)
+                    #if len(frozenset([last_intersections[-1][0],last_intersections[-2][0]])) == 2:
+                    #    new_edges.add(frozenset([last_intersections[-1][0],last_intersections[-2][0]]))
+                for intersection in last_intersections:
+                    if (intersection[0], True) in intersections:
+                        if intersection[1] is not None:
+                            intersections[intersections.index((intersection[0], True))] = intersection
+                    elif (intersection[0], False) in intersections:
+                        if intersection[1] is not None:
+                            intersections[intersections.index((intersection[0], False))] = intersection
+                    elif (intersection[0], None) in intersections:
+                        if intersection[1]:
+                            intersections[intersections.index((intersection[0], None))] = intersection
+                    else:
+                        intersections.append(intersection)
+        #print('WHO',new_edges)
+        f = {frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face}
+        for box_index, box_point in enumerate(box):
+            edge1 = frozenset([box[box_index-1],box_point])
+            for edge2 in f:
+                for point in edge1:
+                    if not Box.point_on_segment(round_edge(edge2), round_point(point)):
+                        break
+                else:
+                    p1, p2 = edge2
+                    edge3 = [tuple(float(y) for y in p1), sorted([(distance(p1,y),y) for y in edge1])[0][1]]
+                    if distance(edge3[0],edge3[1]) > 0:
+                        new_edges.add(frozenset(edge3))
+                    edge3 = [tuple(float(y) for y in p2), sorted([(distance(p2,y),y) for y in edge1])[0][1]]
+                    if distance(edge3[0],edge3[1]) > 0:
+                        new_edges.add(frozenset(edge3))
+                    break
+        box_old = [x for x in box]
+        print('intersections', intersections)
+        if len(intersections) > 1:
+            print(box)
+            if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0]:
+                if round_float(circuit[0][0]) == round_float(self.x_min):
+                    box_i = 0
+                if round_float(circuit[0][0]) == round_float(self.x_max):
+                    box_i = 1
+            elif circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1]:
+                if round_float(circuit[0][1]) == round_float(self.y_min):
+                    box_i = 2
+                if round_float(circuit[0][1]) == round_float(self.y_max):
+                    box_i = 3
+            elif circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2]:
+                if round_float(circuit[0][2]) == round_float(self.z_min):
+                    box_i = 4
+                if round_float(circuit[0][2]) == round_float(self.z_max):
+                    box_i = 5
+            for intersection in intersections:
+                for j in range(len(box)):
+                    #print(frozenset([box[j-1],box[j]]), intersection)
+                    if Box.point_on_segment(round_edge(frozenset([box[j-1],box[j]])), round_point(intersection[0])) and round_point(box[j-1]) != round_point(intersection[0]) and round_point(box[j]) != round_point(intersection[0]):
+                        box.insert(j,intersection[0])
+                        break
+            for i, intersection in enumerate(intersections):
+                try:
+                    index = box.index(intersection[0])
+                    path1 = [intersection[0]]
+                except ValueError:
+                    index = box.index(round_point(intersection[0]))
+                    path1 = [round_point(intersection[0])]
+                inside1 = intersection[1]
+                index += 1
+                index %= len(box)
+                while True:
+                    path1.append(box[index])
+                    if (round_point(box[index]),True) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside2 = True
+                        break
+                    if (round_point(box[index]),False) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside2 = False
+                        break
+                    if (round_point(box[index]),None) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside2 = None
+                        break
+                    index += 1
+                    index %= len(box)
+                try:
+                    index = box.index(intersection[0])
+                    path2 = [intersection[0]]
+                except ValueError:
+                    index = box.index(round_point(intersection[0]))
+                    path2 = [round_point(intersection[0])]
+                inside3 = intersection[1]
+                index -= 1
+                index %= len(box)
+                while True:
+                    path2.append(box[index])
+                    if (round_point(box[index]),True) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside4 = True
+                        break
+                    if (round_point(box[index]),False) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside4 = False
+                        break
+                    if (round_point(box[index]),None) in [(round_point(x[0]),x[1])for x in intersections]:
+                        inside4 = None
+                        break
+                    index -= 1
+                    index %= len(box)
+                print("path1",path1,inside1,inside2)
+                print("path2",path2,inside3,inside4)
+                is_border_path1 = inside1 is not None and inside2 is not None and not inside1 and inside2
+                is_border_path2 = inside3 is not None and inside4 is not None and not inside3 and inside4
+                if path1[-1] == path2[-1] and is_border_path1 and is_border_path2:
+                    distance1 = sum(distance(path1[i-1],x) for i,x in enumerate(path1[:-1]))
+                    distance2 = sum(distance(path2[i-1],x) for i,x in enumerate(path2[:-1]))
+                    if distance2 > distance1:
+                        is_border_path1 = False
+                    else:
+                        is_border_path2 = False
+                for path, is_border_path in [(path1, is_border_path1), (path2, is_border_path2)]:
+                    if is_border_path:
+                        for k,z in enumerate(path[:-1]):
+                            point = tuple((z[j]+path[k+1][j])/2 for j in range(3))
+                            if not Box.inside_polyhedron(poly,point):
+                                break
+                        else:
+                            for j,x in enumerate(path[:-1]):
+                                edge1 = frozenset([x,path[j+1]])
+                                for edge2 in new_edges:
+                                    for point in edge1:
+                                        if not Box.point_on_segment(round_edge(edge2), round_point(point)):
+                                            break
+                                    else:
+                                        p1, p2 = edge2
+                                        edge3 = [p1, sorted([(distance(p1,y),y) for y in edge1])[0][1]]
+                                        if distance(edge3[0],edge3[1]) > 0:
+                                            new_edges.add(frozenset(edge3))
+                                        edge3 = [p2, sorted([(distance(p2,y),y) for y in edge1])[0][1]]
+                                        if distance(edge3[0],edge3[1]) > 0:
+                                            new_edges.add(frozenset(edge3))
+                                        break
+                                else:
+                                    if len(edge1) == 2:
+                                        new_edges.add(edge1)
+                                        path_edges.add(edge1)
+            '''
+            for i, intersection1 in enumerate(intersections):
+                if intersection1[1] is None:
+                    continue
+                for j, intersection2 in enumerate(intersections[i+1:]+intersections):
+                    if intersection2[1] is None:
+                        continue
+                    break
+                path = (intersections[i:]+intersections)[:min(len(intersections),j+2)]
+                #print('temp',path)
+                for k, intersection3 in enumerate(path):
+                    edge1 = frozenset([path[k-1][0], intersection3[0]])
+                    edge1 = frozenset([tuple(float(round(y*1000)/1000) for y in x) for x in edge1])
+                    p1, p2 = edge1
+                    if not any(Box.point_on_segment(edge2, tuple((p1[l]+p2[l])/2 for l in range(3))) for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}):
+                        continue
+                    for edge2 in new_edges:
+                        for point in edge1:
+                            if not Box.point_on_segment(edge2, point):
+                                break
+                        else:
+                            if edge2 in new_edges:
+                                new_edges.remove(edge2)
+                                p1, p2 = edge2
+                                edge3 = [tuple(float(x) for x in p1), sorted([(distance(p1,x),x) for x in edge1])[0][1]]
+                                if distance(edge3[0],edge3[1]) > 0:
+                                    new_edges.add(frozenset(edge3))
+                                edge3 = [tuple(float(x) for x in p2), sorted([(distance(p2,x),x) for x in edge1])[0][1]]
+                                if distance(edge3[0],edge3[1]) > 0:
+                                    new_edges.add(frozenset(edge3))
+                            else:
+                                new_edges.add(edge1)
+                            break
+                    else:
+                        new_edges.add(edge1)
+                    for edge2 in {frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}:
+                        for point in edge1:
+                            if not Box.point_on_segment(edge2, point):
+                                break
+                        else:
+                            new_edges.add(edge1)
+                            break
+            '''
+            #if all(any(Box.point_on_segment(frozenset([x[j-1],y]), box_point) for x in poly.circuits(face_index) for j,y in enumerate(x)) for box_point in box_old):
+            if all((box_point, None) in intersections for box_point in box_old) and not (len(circuit) == 4 and not len(set(circuit)-set(box_old))):
+                for k, intersection3 in enumerate(intersections):
+                    edge1 = frozenset([intersections[k-1][0], intersection3[0]])
+                    p1, p2 = edge1
+                    if not any(Box.point_on_segment(round_edge(edge2), round_point(tuple((p1[l]+p2[l])/2 for l in range(3)))) for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}):
+                        continue
+                    for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}:
+                        for point in edge1:
+                            if not Box.point_on_segment(round_edge(edge2), round_point(point)):
+                                break
+                        else:
+                            if edge2 in new_edges:
+                                new_edges.remove(edge2)
+                                p1, p2 = edge2
+                                edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
+                                if distance(edge3[0],edge3[1]) > 0:
+                                    new_edges.add(frozenset(edge3))
+                                edge3 = [p2, sorted([(distance(p2,x),x) for x in edge1])[0][1]]
+                                if distance(edge3[0],edge3[1]) > 0:
+                                    new_edges.add(frozenset(edge3))
+                            else:
+                                new_edges.add(edge1)
+                                path_edges.add(edge1)
+                            break
+                    else:
+                        new_edges.add(edge1)
+                        path_edges.add(edge1)
+            '''
+            else:
+                for i in range(len(box)):
+                    if not any(Polyhedron.inside_triangle(y,tuple((box[i-1][j]+box[i][j])/2 for j in range(3))) for y in Polyhedron.triangulate(circuit)):
+                        break
+                else:
+                    for i, intersection in enumerate(intersections):
+                        index = box.index(intersection[0])
+                        edge = frozenset([tuple(float(round(x*1000)/1000) for x in box[index]),tuple(float(round(x*1000)/1000) for x in box[(index+1)%len(box)])])
+                        if edge in new_edges:
+                            new_edges.remove(edge)
+                        else:
+                            new_edges.add(edge)
+                        edge = frozenset([tuple(float(round(x*1000)/1000) for x in box[index]),tuple(float(round(x*1000)/1000) for x in box[(index-1)%len(box)])])
+                        if edge in new_edges:
+                            new_edges.remove(edge)
+                        else:
+                            new_edges.add(edge)
+            while True:
+                combine = False
+                for edge1 in new_edges:
+                    for edge2 in new_edges:
+                        edge1_int = frozenset(tuple(int(round(x*1000)) for x in point) for point in edge1)
+                        edge2_int = frozenset(tuple(int(round(x*1000)) for x in point) for point in edge2)
+                        #print(edge1, edge2)
+                        if len(edge1_int&edge2_int)==1 and Box.colinear(edge1|edge2):
+                            new_edges.add(frozenset(tuple(x/1000 for x in point) for point in edge1_int^edge2_int))
+                            new_edges.remove(edge1)
+                            new_edges.remove(edge2)
+                            combine = True
+                            break
+                    if combine:
+                        break
+                else:
+                    break
+                '''
+        elif len(intersections) == 0:
+            #print('box',box)
+            if len(box) and any([Polyhedron.inside_triangle(x,box[0]) for x in Polyhedron.triangulate(circuit)]):
+                for j, box_point in enumerate(box):
+                    new_edges.add(frozenset([box[j-1],box_point]))
+                if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0]:
+                    if round_float(circuit[0][0]) == round_float(self.x_min):
+                        box_i = 0
+                    if round_float(circuit[0][0]) == round_float(self.x_max):
+                        box_i = 1
+                elif circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1]:
+                    if round_float(circuit[0][1]) == round_float(self.y_min):
+                        box_i = 2
+                    if round_float(circuit[0][1]) == round_float(self.y_max):
+                        box_i = 3
+                elif circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2]:
+                    if round_float(circuit[0][2]) == round_float(self.z_min):
+                        box_i = 4
+                    if round_float(circuit[0][2]) == round_float(self.z_max):
+                        box_i = 5
+            for i,x in enumerate(circuit):
+                if circuit[i-1] in poly.verts and x in poly.verts and frozenset([poly.verts.index(circuit[i-1]),poly.verts.index(x)]) in poly.edges:
+                    new_edges.add(frozenset([circuit[i-1],x]))
+        print('face processing time', poly.circuits(face_index), time.time()-start_time_face)
+        return new_edges, path_edges, box_i
     def delete(self, poly):
         start_time = time.time()
         box_faces = []
@@ -294,6 +719,7 @@ class Box:
             for edge in poly.edges:
                 edge = frozenset(poly.verts[index] for index in edge)
                 if self.intersect(edge) and not any(all(Box.colinear(frozenset([(x1,y1,z1),(x2,y2,z2)])|frozenset([point])) for point in edge) for x1 in (self.x_min,self.x_max) for y1 in (self.y_min,self.y_max) for z1 in (self.z_min,self.z_max) for x2 in (self.x_min,self.x_max) for y2 in (self.y_min,self.y_max) for z2 in (self.z_min,self.z_max) if sum([x1 != x2,y1 != y2, z1 != z2]) == 1) and not any(Box.coplanar(edge|x) for x in box_faces):
+                    print('intersect', edge)
                     triple_break = False
                     for p1 in [x for x in edge if self.x_min <= x[0] and x[0] <= self.x_max and self.y_min <= x[1] and x[1] <= self.y_max and self.z_min <= x[2] and x[2] <= self.z_max]:
                         p2 = list(edge-frozenset([p1]))[0]
@@ -311,437 +737,26 @@ class Box:
                         break
             else:
                 return poly
-        face_lookup = dict()
+        with Pool(8) as p:
+            output = p.starmap(self.delete_preprocess, [(poly,i) for i in range(len(poly.faces))])
+            faces = [x[0] for x in output]
+            print('POOL')
+            for face in faces:
+                print(face)
+            temp = [x[1] for x in output]
+            box_map = [None for i in range(6)]
+            print([x[2] for x in output])
+            for j,y in enumerate([x[2] for x in output]):
+                if y is not None:
+                    box_map[y] = poly.faces[j]
+            print('box_map', box_map)
         path_edges = set()
-        box_map = [None for i in range(6)]
-        for face_index, face in enumerate(poly.faces):
-            start_time_face = time.time()
-            #print(face)
-            circuit = Polyhedron.circuit_cut(poly.circuits(face_index))
-            #print('circuit', circuit)
-            new_edges = set()
-            box = []
-            box_index = None
-            if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0] and circuit[0][0] >= self.x_min and circuit[0][0] <= self.x_max:
-                box = [(circuit[0][0], self.y_min, self.z_min),(circuit[0][0], self.y_max, self.z_min),(circuit[0][0], self.y_max, self.z_max),(circuit[0][0], self.y_min, self.z_max)]
-                if circuit[0][0] == self.x_min:
-                    box_map[0] = face
-                    box_index = 0
-                if circuit[0][0] == self.x_max:
-                    box_map[1] = face
-                    box_index = 1
-            elif circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1] and circuit[0][1] >= self.y_min and circuit[0][1] <= self.y_max:
-                box = [(self.x_min, circuit[0][1], self.z_min),(self.x_max, circuit[0][1], self.z_min),(self.x_max, circuit[0][1], self.z_max),(self.x_min, circuit[0][1], self.z_max)]
-                if circuit[0][1] == self.y_min:
-                    box_map[2] = face
-                    box_index = 2
-                if circuit[0][1] == self.y_max:
-                    box_map[3] = face
-                    box_index = 3
-            elif circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] >= self.z_min and circuit[0][2] <= self.z_max:
-                box = [(self.x_min, self.y_min, circuit[0][2]),(self.x_max, self.y_min, circuit[0][2]),(self.x_max, self.y_max, circuit[0][2]),(self.x_min, self.y_max, circuit[0][2])] 
-                if circuit[0][2] == self.z_min:
-                    box_map[4] = face
-                    box_index = 4
-                if circuit[0][2] == self.z_max:
-                    box_map[5] = face
-                    box_index = 5
-            if all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for i,x in enumerate(circuit)):
-                double_break = False
-                for p1 in circuit:
-                    if p1 in poly.verts:
-                        for edge in {frozenset(poly.verts[index] for index in edge) for edge in poly.edges}:
-                            intersection = 0
-                            if p1 in edge:
-                                p2 = list(edge - frozenset([p1]))[0]
-                                if p2 not in circuit:
-                                    dim = [p1[i]!=p2[i] for i in range(3)].index(True)
-                                    vec = tuple(p2[i]-p1[i] for i in range(3))
-                                    for w in [(self.x_min,self.x_max),(self.y_min,self.y_max),(self.z_min,self.z_max)][dim]:
-                                        if dim == 0:
-                                            triangles = [[(w,self.y_min,self.z_min),(w,self.y_max,self.z_min),(w,self.y_max,self.z_max)],[(w,self.y_min,self.z_min),(w,self.y_min,self.z_max),(w,self.y_max,self.z_max)]]
-                                        if dim == 1:
-                                            triangles = [[(self.x_min,w,self.z_min),(self.x_max,w,self.z_min),(self.x_max,w,self.z_max)],[(self.x_min,w,self.z_min),(self.x_min,w,self.z_max),(self.x_max,w,self.z_max)]]
-                                        if dim == 2:
-                                                triangles = [[(self.x_min,self.y_min,w),(self.x_max,self.y_min,w),(self.x_max,self.y_max,w)],[(self.x_min,self.y_min,w),(self.x_min,self.y_max,w),(self.x_max,self.z_max,w)]]
-                                        if vec[dim] > 0:
-                                            if w > p1[dim]:
-                                                projection = [p1[0],p1[1],p1[2]]
-                                                projection[dim] = w
-                                                projection = tuple(projection)
-                                                if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
-                                                    intersection += 1
-                                        else:
-                                            if w < p1[dim]:
-                                                projection = [p1[0],p1[1],p1[2]]
-                                                projection[dim] = w
-                                                projection = tuple(projection)
-                                                if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
-                                                    intersection += 1
-                            if intersection%2 == 0:
-                                double_break = True
-                                break
-                        if double_break:
-                            break
-                else:
-                    face_lookup[face] = set()
-                    print('face processing time', face_index, time.time()-start_time_face)
-                    continue
-            if box_index is not None:
-                if box_index == 0 or box_index == 1:
-                    edges = {frozenset(x) for x in zip([(self.x_min, self.y_min, self.z_min),(self.x_min, self.y_max, self.z_min),(self.x_min, self.y_max, self.z_max),(self.x_min, self.y_min, self.z_max)],[(self.x_max, self.y_min, self.z_min),(self.x_max, self.y_max, self.z_min),(self.x_max, self.y_max, self.z_max),(self.x_max, self.y_min, self.z_max)])}
-                if box_index == 2 or box_index == 3:
-                    edges = {frozenset(x) for x in zip([(self.x_min, self.y_min, self.z_min),(self.x_max, self.y_min, self.z_min),(self.x_max, self.y_min, self.z_max),(self.x_min, self.y_min, self.z_max)],[(self.x_min, self.y_max, self.z_min),(self.x_max, self.y_max, self.z_min),(self.x_max, self.y_max, self.z_max),(self.x_min, self.y_max, self.z_max)])}
-                if box_index == 4 or box_index == 5:
-                    edges = {frozenset(x) for x in zip([(self.x_min, self.y_min, self.z_min),(self.x_max, self.y_min, self.z_min),(self.x_max, self.y_max, self.z_min),(self.x_min, self.y_max, self.z_min)],[(self.x_min, self.y_min, self.z_max),(self.x_max, self.y_min, self.z_max),(self.x_max, self.y_max, self.z_max),(self.x_min, self.y_max, self.z_max)])}
-                triple_break = False
-                single_break = False
-                for p1 in box:
-                    for edge in edges:
-                        if round_point(p1) in round_edge(edge):
-                            p2 = list(edge-frozenset([p1, round_point(p1)]))[0]
-                            vec = tuple(p2[i]-p1[i] for i in range(3))
-                            for i in range(20):
-                                if vec[0]/2**i == 0 and vec[1]/2**i == 0 and vec[2]/2**i == 0:
-                                    break
-                                if Box.inside_polyhedron(poly, tuple(p1[i]+vec[i]/2**i for i in range(3))):
-                                    triple_break = True
-                                    break
-                            if triple_break:
-                                break
-                    else:
-                        if not all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in [round_point(y) for y in circuit if y in poly.verts]):
-                            pass
-                            #print('hi', circuit)
-                            #face_lookup[face] = {frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face}
-                            #single_break = True
-                    if single_break or triple_break:
-                        break
-                if single_break:
-                    print('face processing time', poly.circuits(face_index), time.time()-start_time_face)
-                    continue
-            '''
-            elif len(box):
-                face_lookup[face] = set()
-                print('heyo') 
-                print('face processing time', poly.circuits(face_index), time.time()-start_time_face)
-                continue
-            '''
-            intersections = []
-            for i,x in enumerate(circuit):
-                if not any(circuit[i-1] in y and x in y for y in poly.circuits(face_index)):
-                    continue
-                p1 = circuit[i-1]
-                p2 = x
-                last_intersections = []
-                for j, box_point in enumerate(box):
-                    if not Box.colinear(set([p1,p2,box[j-1],box_point])):
-                        for intersection in Box.intersect_segments(frozenset([p1,p2]),frozenset([box[j-1],box_point])):
-                            #print("intersection", intersection, p1, p2)
-                            last_intersections.append(intersection)
-                    else:
-                        if Box.point_on_segment(frozenset([box[j-1],box_point]),p1) and Box.point_on_segment(frozenset([box[j-1],box_point]),p2):
-                            if p1 not in box:
-                                last_intersections.append(p1)
-                            if p2 not in box:
-                                last_intersections.append(p2)
-                #print('last intersections', last_intersections)
-                if len(last_intersections) == 0:
-                    new_edges.add(frozenset([p1,p2]))
-                elif len(last_intersections) == 1:
-                    if (self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max):
-                        last_intersections[-1] = (last_intersections[-1],False)
-                        #print("intersection p2", p2, last_intersections[0][0])
-                        if len(frozenset([p2,last_intersections[0][0]])) == 2:
-                            new_edges.add(frozenset([p2,last_intersections[0][0]]))
-                        if (last_intersections[0][0], True) in intersections:
-                            intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
-                        elif (last_intersections[0][0], False) in intersections:
-                            intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
-                        elif (last_intersections[0][0], None) in intersections:
-                            intersections[intersections.index((last_intersections[0][0], None))] = last_intersections[0]
-                        else:
-                            intersections.extend(last_intersections)
-                    elif (self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max):
-                        last_intersections[-1] = (last_intersections[-1],True)
-                        #print("intersection p1", p1, last_intersections[0][0])
-                        if len(frozenset([p1,last_intersections[0][0]])) == 2:
-                            new_edges.add(frozenset([p1,last_intersections[0][0]]))
-                        if (last_intersections[0][0], True) in intersections:
-                            intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
-                        elif (last_intersections[0][0], False) in intersections:
-                            #intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
-                            pass
-                        elif (last_intersections[0][0], None) in intersections:
-                            intersections[intersections.index((last_intersections[0][0], None))] = last_intersections[0]
-                        else:
-                            intersections.extend(last_intersections)
-                elif len(last_intersections) == 2:
-                    last_intersections = [y[1] for j,y in enumerate(sorted((distance(p1,x),x) for x in last_intersections))]
-                    if ((self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max)) and ((self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max)):
-                        last_intersections[-1] = (last_intersections[-1], False)
-                        last_intersections[-2] = (last_intersections[-2], True)
-                        if len(frozenset([p1,last_intersections[0][0]])) == 2:
-                            new_edges.add(frozenset([p1,last_intersections[0][0]]))
-                        if len(frozenset([p2,last_intersections[-1][0]])) == 2:
-                            new_edges.add(frozenset([p2,last_intersections[-1][0]]))
-                    elif (self.x_min > p1[0] or p1[0] > self.x_max) or (self.y_min > p1[1] or p1[1] > self.y_max) or (self.z_min > p1[2] or p1[2] > self.z_max):
-                        last_intersections[-1] = (last_intersections[-1], None)
-                        last_intersections[-2] = (last_intersections[-2], True)
-                        if len(frozenset([p1,last_intersections[0][0]])) == 2:
-                            new_edges.add(frozenset([p1,last_intersections[0][0]]))
-                    elif (self.x_min > p2[0] or p2[0] > self.x_max) or (self.y_min > p2[1] or p2[1] > self.y_max) or (self.z_min > p2[2] or p2[2] > self.z_max):
-                        last_intersections[-1] = (last_intersections[-1], False)
-                        last_intersections[-2] = (last_intersections[-2], None)
-                        if len(frozenset([p2,last_intersections[-1][0]])) == 2:
-                            new_edges.add(frozenset([p2,last_intersections[-1][0]]))
-                    else:
-                        last_intersections[-1] = (last_intersections[-1], None)
-                        last_intersections[-2] = (last_intersections[-2], None)
-                        #if len(frozenset([last_intersections[-1][0],last_intersections[-2][0]])) == 2:
-                        #    new_edges.add(frozenset([last_intersections[-1][0],last_intersections[-2][0]]))
-                    for intersection in last_intersections:
-                        if (intersection[0], True) in intersections:
-                            if intersection[1] is not None:
-                                intersections[intersections.index((intersection[0], True))] = intersection
-                        elif (intersection[0], False) in intersections:
-                            if intersection[1] is not None:
-                                intersections[intersections.index((intersection[0], False))] = intersection
-                        elif (intersection[0], None) in intersections:
-                            if intersection[1]:
-                                intersections[intersections.index((intersection[0], None))] = intersection
-                        else:
-                            intersections.append(intersection)
-            #print('WHO',new_edges)
-            f = {frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face}
-            for box_index, box_point in enumerate(box):
-                edge1 = frozenset([box[box_index-1],box_point])
-                for edge2 in f:
-                    for point in edge1:
-                        if not Box.point_on_segment(round_edge(edge2), round_point(point)):
-                            break
-                    else:
-                        p1, p2 = edge2
-                        edge3 = [tuple(float(y) for y in p1), sorted([(distance(p1,y),y) for y in edge1])[0][1]]
-                        if distance(edge3[0],edge3[1]) > 0:
-                            new_edges.add(frozenset(edge3))
-                        edge3 = [tuple(float(y) for y in p2), sorted([(distance(p2,y),y) for y in edge1])[0][1]]
-                        if distance(edge3[0],edge3[1]) > 0:
-                            new_edges.add(frozenset(edge3))
-                        break
-            box_old = [x for x in box]
-            print('intersections', intersections)
-            if len(intersections) > 1:
-                print(box)
-                for intersection in intersections:
-                    for j in range(len(box)):
-                        #print(frozenset([box[j-1],box[j]]), intersection)
-                        if Box.point_on_segment(round_edge(frozenset([box[j-1],box[j]])), round_point(intersection[0])) and round_point(box[j-1]) != round_point(intersection[0]) and round_point(box[j]) != round_point(intersection[0]):
-                            box.insert(j,intersection[0])
-                            break
-                for i, intersection in enumerate(intersections):
-                    try:
-                        index = box.index(intersection[0])
-                        path1 = [intersection[0]]
-                    except ValueError:
-                        index = box.index(round_point(intersection[0]))
-                        path1 = [round_point(intersection[0])]
-                    inside1 = intersection[1]
-                    index += 1
-                    index %= len(box)
-                    while True:
-                        path1.append(box[index])
-                        if (round_point(box[index]),True) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside2 = True
-                            break
-                        if (round_point(box[index]),False) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside2 = False
-                            break
-                        if (round_point(box[index]),None) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside2 = None
-                            break
-                        index += 1
-                        index %= len(box)
-                    try:
-                        index = box.index(intersection[0])
-                        path2 = [intersection[0]]
-                    except ValueError:
-                        index = box.index(round_point(intersection[0]))
-                        path2 = [round_point(intersection[0])]
-                    inside3 = intersection[1]
-                    index -= 1
-                    index %= len(box)
-                    while True:
-                        path2.append(box[index])
-                        if (round_point(box[index]),True) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside4 = True
-                            break
-                        if (round_point(box[index]),False) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside4 = False
-                            break
-                        if (round_point(box[index]),None) in [(round_point(x[0]),x[1])for x in intersections]:
-                            inside4 = None
-                            break
-                        index -= 1
-                        index %= len(box)
-                    print("path1",path1,inside1,inside2)
-                    print("path2",path2,inside3,inside4)
-                    is_border_path1 = inside1 is not None and inside2 is not None and not inside1 and inside2
-                    is_border_path2 = inside3 is not None and inside4 is not None and not inside3 and inside4
-                    if path1[-1] == path2[-1] and is_border_path1 and is_border_path2:
-                        distance1 = sum(distance(path1[i-1],x) for i,x in enumerate(path1[:-1]))
-                        distance2 = sum(distance(path2[i-1],x) for i,x in enumerate(path2[:-1]))
-                        if distance2 > distance1:
-                            is_border_path1 = False
-                        else:
-                            is_border_path2 = False
-                    for path, is_border_path in [(path1, is_border_path1), (path2, is_border_path2)]:
-                        if is_border_path:
-                            for k,z in enumerate(path[:-1]):
-                                point = tuple((z[j]+path[k+1][j])/2 for j in range(3))
-                                if not Box.inside_polyhedron(poly,point):
-                                    break
-                            else:
-                                for j,x in enumerate(path[:-1]):
-                                    edge1 = frozenset([x,path[j+1]])
-                                    for edge2 in new_edges:
-                                        for point in edge1:
-                                            if not Box.point_on_segment(round_edge(edge2), round_point(point)):
-                                                break
-                                        else:
-                                            p1, p2 = edge2
-                                            edge3 = [p1, sorted([(distance(p1,y),y) for y in edge1])[0][1]]
-                                            if distance(edge3[0],edge3[1]) > 0:
-                                                new_edges.add(frozenset(edge3))
-                                            edge3 = [p2, sorted([(distance(p2,y),y) for y in edge1])[0][1]]
-                                            if distance(edge3[0],edge3[1]) > 0:
-                                                new_edges.add(frozenset(edge3))
-                                            break
-                                    else:
-                                        if len(edge1) == 2:
-                                            new_edges.add(edge1)
-                                            path_edges.add(edge1)
-                '''
-                for i, intersection1 in enumerate(intersections):
-                    if intersection1[1] is None:
-                        continue
-                    for j, intersection2 in enumerate(intersections[i+1:]+intersections):
-                        if intersection2[1] is None:
-                            continue
-                        break
-                    path = (intersections[i:]+intersections)[:min(len(intersections),j+2)]
-                    #print('temp',path)
-                    for k, intersection3 in enumerate(path):
-                        edge1 = frozenset([path[k-1][0], intersection3[0]])
-                        edge1 = frozenset([tuple(float(round(y*1000)/1000) for y in x) for x in edge1])
-                        p1, p2 = edge1
-                        if not any(Box.point_on_segment(edge2, tuple((p1[l]+p2[l])/2 for l in range(3))) for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}):
-                            continue
-                        for edge2 in new_edges:
-                            for point in edge1:
-                                if not Box.point_on_segment(edge2, point):
-                                    break
-                            else:
-                                if edge2 in new_edges:
-                                    new_edges.remove(edge2)
-                                    p1, p2 = edge2
-                                    edge3 = [tuple(float(x) for x in p1), sorted([(distance(p1,x),x) for x in edge1])[0][1]]
-                                    if distance(edge3[0],edge3[1]) > 0:
-                                        new_edges.add(frozenset(edge3))
-                                    edge3 = [tuple(float(x) for x in p2), sorted([(distance(p2,x),x) for x in edge1])[0][1]]
-                                    if distance(edge3[0],edge3[1]) > 0:
-                                        new_edges.add(frozenset(edge3))
-                                else:
-                                    new_edges.add(edge1)
-                                break
-                        else:
-                            new_edges.add(edge1)
-                        for edge2 in {frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}:
-                            for point in edge1:
-                                if not Box.point_on_segment(edge2, point):
-                                    break
-                            else:
-                                new_edges.add(edge1)
-                                break
-                '''
-                #if all(any(Box.point_on_segment(frozenset([x[j-1],y]), box_point) for x in poly.circuits(face_index) for j,y in enumerate(x)) for box_point in box_old):
-                if all((box_point, None) in intersections for box_point in box_old) and not (len(circuit) == 4 and not len(set(circuit)-set(box_old))):
-                    for k, intersection3 in enumerate(intersections):
-                        edge1 = frozenset([intersections[k-1][0], intersection3[0]])
-                        p1, p2 = edge1
-                        if not any(Box.point_on_segment(round_edge(edge2), round_point(tuple((p1[l]+p2[l])/2 for l in range(3)))) for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}):
-                            continue
-                        for edge2 in new_edges|{frozenset([poly.verts[index] for index in poly.edges[edge_index]]) for edge_index in face}:
-                            for point in edge1:
-                                if not Box.point_on_segment(round_edge(edge2), round_point(point)):
-                                    break
-                            else:
-                                if edge2 in new_edges:
-                                    new_edges.remove(edge2)
-                                    p1, p2 = edge2
-                                    edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
-                                    if distance(edge3[0],edge3[1]) > 0:
-                                        new_edges.add(frozenset(edge3))
-                                    edge3 = [p2, sorted([(distance(p2,x),x) for x in edge1])[0][1]]
-                                    if distance(edge3[0],edge3[1]) > 0:
-                                        new_edges.add(frozenset(edge3))
-                                else:
-                                    new_edges.add(edge1)
-                                    path_edges.add(edge1)
-                                break
-                        else:
-                            new_edges.add(edge1)
-                            path_edges.add(edge1)
-                '''
-                else:
-                    for i in range(len(box)):
-                        if not any(Polyhedron.inside_triangle(y,tuple((box[i-1][j]+box[i][j])/2 for j in range(3))) for y in Polyhedron.triangulate(circuit)):
-                            break
-                    else:
-                        for i, intersection in enumerate(intersections):
-                            index = box.index(intersection[0])
-                            edge = frozenset([tuple(float(round(x*1000)/1000) for x in box[index]),tuple(float(round(x*1000)/1000) for x in box[(index+1)%len(box)])])
-                            if edge in new_edges:
-                                new_edges.remove(edge)
-                            else:
-                                new_edges.add(edge)
-                            edge = frozenset([tuple(float(round(x*1000)/1000) for x in box[index]),tuple(float(round(x*1000)/1000) for x in box[(index-1)%len(box)])])
-                            if edge in new_edges:
-                                new_edges.remove(edge)
-                            else:
-                                new_edges.add(edge)
-                while True:
-                    combine = False
-                    for edge1 in new_edges:
-                        for edge2 in new_edges:
-                            edge1_int = frozenset(tuple(int(round(x*1000)) for x in point) for point in edge1)
-                            edge2_int = frozenset(tuple(int(round(x*1000)) for x in point) for point in edge2)
-                            #print(edge1, edge2)
-                            if len(edge1_int&edge2_int)==1 and Box.colinear(edge1|edge2):
-                                new_edges.add(frozenset(tuple(x/1000 for x in point) for point in edge1_int^edge2_int))
-                                new_edges.remove(edge1)
-                                new_edges.remove(edge2)
-                                combine = True
-                                break
-                        if combine:
-                            break
-                    else:
-                        break
-                    '''
-            elif len(intersections) == 0:
-                #print('box',box)
-                if len(box) and any([Polyhedron.inside_triangle(x,box[0]) for x in Polyhedron.triangulate(circuit)]):
-                    for j, box_point in enumerate(box):
-                        new_edges.add(frozenset([box[j-1],box_point]))
-                for i,x in enumerate(circuit):
-                    if circuit[i-1] in poly.verts and x in poly.verts and frozenset([poly.verts.index(circuit[i-1]),poly.verts.index(x)]) in poly.edges:
-                        new_edges.add(frozenset([circuit[i-1],x]))
-            face_lookup[face] = new_edges
-            print('face processing time', poly.circuits(face_index), time.time()-start_time_face)
+        for x in temp:
+            path_edges |= x
         print('preprocessing time', time.time()-start_time)
-        old_faces = [key for key in face_lookup if len(face_lookup[key])]
+        old_faces = [face for face_index,face in enumerate(poly.faces) if len(faces[face_index])]
         old_face_indices = [poly.faces.index(x) for x in old_faces]
-        faces = [face_lookup[key] for key in old_faces]
+        faces = [face for face in faces if len(face)]
         if all(x is None for x in box_map):
             box_map = [False for i in range(6)]
         for face_index,face in enumerate(box_map):
@@ -759,10 +774,10 @@ class Box:
                 box = [(self.x_min, self.y_min, self.z_max),(self.x_max, self.y_min, self.z_max),(self.x_max, self.y_max, self.z_max),(self.x_min, self.y_max, self.z_max)]
             if face is None:
                 if all(Box.inside_polyhedron(poly, x) for x in box):
-                    #print('inside', box)
+                    print('inside', box)
                     faces.append(set())
                     for i,x in enumerate(box):
-                        faces[-1].add(frozenset([box[i-1],x]))
+                        faces[-1].add(round_edge(frozenset([box[i-1],x])))
             elif face != False and any(not any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(Polyhedron.find_exterior_circuit(poly.circuits(poly.faces.index(face))))) for y in box) and all(Box.inside_polyhedron(poly,y) and not any(Polyhedron.inside_triangle(x,y) for face_index,face in enumerate(poly.faces) for x in Polyhedron.triangulate(Polyhedron.circuit_cut(poly.circuits(face_index)))) for y in box):# or any(Box.point_on_segment(frozenset(poly.verts[w] for w in poly.edges[z]), y) for z in face) for y in box):
                 for i,x in enumerate(box):
                     edge1 = frozenset([box[i-1],x])
@@ -830,7 +845,8 @@ class Box:
                     break
             else:
                 faces.append({frozenset([circuit[i-1],x]) for i,x in enumerate(circuit)})
-        
+        for face in faces:
+            print(face)
         while True:
             for face in faces:
                 for edge1 in face:
@@ -866,35 +882,12 @@ class Box:
         verts = list(set(point for face in faces for edge in face for point in edge))
         edges = list(set(frozenset(point for point in edge) for face in faces for edge in face))
         #print('BLAH',edges)
-        faces = [frozenset(edges.index(frozenset(point for point in edge)) for edge in face) for face in faces]
+        faces = list(set(frozenset(edges.index(frozenset(point for point in edge)) for edge in face) for face in faces))
         edges = [frozenset(verts.index(point) for point in edge) for edge in edges]
         new_poly = Polyhedron()
         new_poly.verts = verts
         new_poly.edges = edges
         new_poly.faces = faces
-        while True:
-            double_break = False
-            for i,x in enumerate(new_poly.verts):
-                for j,y in enumerate(new_poly.verts[i+1:]):
-                    if distance(x,y) < 0.001:
-                        del new_poly.verts[i+1+j]
-                        for k,z in enumerate(new_poly.edges):
-                            p1, p2 = z
-                            if p1 == i+1+j:
-                                p1 = i
-                            elif p1 > i+1+j:
-                                p1 -= 1
-                            if p2 == i+1+j:
-                                p2 = i
-                            elif p2 > i+1+j:
-                                p2 -= 1
-                            new_poly.edges[k] = frozenset([p1,p2])
-                        double_break = True
-                        break
-                if double_break:
-                    break
-            else:
-                break
         for face_index, face in enumerate(new_poly.faces):
             pass
             #print('face', [frozenset(verts[y] for y in edges[x]) for x in face])
@@ -1025,7 +1018,7 @@ class Box:
             circuit = Polyhedron.circuit_cut(poly.circuits(face_index1))
             if any(self.intersect(edge) for edge in face1):
                 for face_index2, face2 in enumerate(new_faces):
-                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
+                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
                         temp = set(new_edges)-new_faces[face_index2//2]-new_faces[face_index2//2+1]
                         double_break = False
                         triple_break = False
@@ -1055,7 +1048,7 @@ class Box:
                                 mapping[face_index2] = set()
                             mapping[face_index2].add(face1)
             for face_index2, face2 in enumerate(new_faces):
-                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
+                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
                     if all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit):
                         if face_index2 not in mapping:
                             mapping[face_index2] = set()
@@ -1100,7 +1093,6 @@ class Box:
                             p1, p2 = edge1
                             p3, p4 = edge2
                             if Box.point_on_segment(edge2, p1) and Box.point_on_segment(edge1, p3):
-                                print('ohoho', edge1, edge2)
                                 new_faces[face_index].remove(edge2)
                                 p5 = sorted([(distance(p2,x),x) for x in edge2])[0][1]
                                 p6 = sorted([(distance(p4,x),x) for x in edge1])[0][1]
@@ -1108,7 +1100,6 @@ class Box:
                                 new_faces[face_index].add(frozenset([p4,p6]))
                                 break
                             if Box.point_on_segment(edge2, p2) and  Box.point_on_segment(edge1, p3):
-                                print('ohoho', edge1, edge2)
                                 new_faces[face_index].remove(edge2)
                                 p5 = sorted([(distance(p1,x),x) for x in edge2])[0][1]
                                 p6 = sorted([(distance(p4,x),x) for x in edge1])[0][1]
@@ -1116,7 +1107,6 @@ class Box:
                                 new_faces[face_index].add(frozenset([p4,p6]))
                                 break
                             if Box.point_on_segment(edge2, p1) and  Box.point_on_segment(edge1, p4):
-                                print('ohoho', edge1, edge2)
                                 new_faces[face_index].remove(edge2)
                                 p5 = sorted([(distance(p2,x),x) for x in edge2])[0][1]
                                 p6 = sorted([(distance(p3,x),x) for x in edge1])[0][1]
@@ -1124,7 +1114,6 @@ class Box:
                                 new_faces[face_index].add(frozenset([p3,p6]))
                                 break
                             if Box.point_on_segment(edge2, p2) and  Box.point_on_segment(edge1, p4):
-                                print('ohoho')
                                 new_faces[face_index].remove(edge2)
                                 p5 = sorted([(distance(p1,x),x) for x in edge2])[0][1]
                                 p6 = sorted([(distance(p3,x),x) for x in edge1])[0][1]
@@ -1205,6 +1194,26 @@ class Box:
                             elif p2 > i+1+j:
                                 p2 -= 1
                             new_poly.edges[k] = frozenset([p1,p2])
+                        double_break = True
+                        break
+                if double_break:
+                    break
+            else:
+                break
+        while True:
+            double_break = False
+            for i,x in enumerate(new_poly.edges):
+                for j,y in enumerate(new_poly.edges[i+1:]):
+                    if {new_poly.verts[z] for z in x} == {new_poly.verts[z] for z in y}:
+                        del new_poly.edges[i+1+j]
+                        for k,z in enumerate(new_poly.faces):
+                            temp = list(z)
+                            for l,w in enumerate(temp):
+                                if w > i+1+j:
+                                    temp[l] -= 1
+                                elif w == i+1+j:
+                                    temp[l] = i
+                            new_poly.faces[k] = frozenset(temp)
                         double_break = True
                         break
                 if double_break:
@@ -1822,6 +1831,63 @@ class Polyhedron:
                         break
         #print('is_inside', output)
         return len(output)%2==1
+    def round_verts(self, round_point):
+        self.verts = [round_point(vert) for vert in self.verts]
+        while True:
+            double_break = False
+            for i,x in enumerate(self.verts):
+                for j,y in enumerate(self.verts[i+1:]):
+                    if distance(x,y) < 0.001:
+                        del self.verts[i+1+j]
+                        for k,z in enumerate(self.edges):
+                            p1, p2 = z
+                            if p1 == i+1+j:
+                                p1 = i
+                            elif p1 > i+1+j:
+                                p1 -= 1
+                            if p2 == i+1+j:
+                                p2 = i
+                            elif p2 > i+1+j:
+                                p2 -= 1
+                            self.edges[k] = frozenset([p1,p2])
+                        double_break = True
+                        break
+                if double_break:
+                    break
+            else:
+                break
+        while True:
+            double_break = False
+            for i,x in enumerate(self.edges):
+                for j,y in enumerate(self.edges[i+1:]):
+                    if {self.verts[z] for z in x} == {self.verts[z] for z in y}:
+                        del self.edges[i+1+j]
+                        for k,z in enumerate(self.faces):
+                            temp = list(z)
+                            for l,w in enumerate(temp):
+                                if w > i+1+j:
+                                    temp[l] -= 1
+                                elif w == i+1+j:
+                                    temp[l] = i
+                            self.faces[k] = frozenset(temp)
+                        double_break = True
+                        break
+                if double_break:
+                    break
+            else:
+                break
+        while True:
+            double_break = False
+            for i,x in enumerate(self.faces):
+                for j,y in enumerate(self.faces[i+1:]):
+                    if {frozenset(self.verts[w] for w in self.edges[z]) for z in x} == {frozenset(self.verts[w] for w in self.edges[z]) for z in y}:
+                        del self.faces[i+1+j]
+                        double_break = True
+                        break
+                if double_break:
+                    break
+            else:
+                break
 
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
@@ -1860,6 +1926,7 @@ class Block:
             print("face",{frozenset(self.poly.verts[index] for index in self.poly.edges[edge_index]) for edge_index in face})
             points = Polyhedron.circuit_cut(self.poly.circuits(face_index))
             print("face",points)
+            print('face', face)
             print()
             self.polygons.add(tuple(points))
     def draw(self, pygame, screen):
@@ -2029,6 +2096,7 @@ if __name__ == "__main__":
     dir_mult3 = 1
     z_forward = True
     block = Block(3,3,3)
+    meters = {1}
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -2050,6 +2118,7 @@ if __name__ == "__main__":
                 if event.key in divisor_keys:
                     if not meta_down:
                         block = block.subdivide(1/(divisor_keys.index(event.key)+2))
+                        meters = remeter(meters, block.unit)
                     else:
                         block = block.subdivide(divisor_keys.index(event.key)+2)
                         block.select[0] = block.select[0]//block.unit*block.unit
@@ -2180,12 +2249,14 @@ if __name__ == "__main__":
                     j = min(block.select[1],block.select[1]+block.select_size[1])
                     k = min(block.select[2],block.select[2]+block.select_size[2])
                     size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
-                    box = Box((i,i+size[0]),(j,j+size[1]),(k,k+size[2]))
+                    box = Box((float(i),float(i+size[0])),(float(j),float(j+size[1])),(float(k),float(k+size[2])))
                     #print('box',(i,i+size[0]),(j,j+size[1]),(k,k+size[2]))
                     block.poly = box.delete(block.poly)
                     if not delete:
                         block.poly = box.add(block.poly)
+                    block.poly.round_verts(lambda x: round_point_meter(x, meters))
                     block.flip()
+                    print(meters)
                     block.select = [block.select[0]+block.select_size[0]-block.unit,block.select[1]+block.select_size[1]-block.unit,block.select[2]+block.select_size[2]-block.unit,block.select[3]]
                     block.select_size = [block.unit,block.unit,block.unit]
                 if event.key in {pygame.K_LMETA, pygame.K_RMETA}:
