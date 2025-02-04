@@ -1981,13 +1981,6 @@ class Block:
             pygame.draw.polygon(screen, color, points)
         '''
         #print('face drawing time', time.time()-start_time)
-        for edge in self.poly.edges:
-            p1, p2 = tuple(self.poly.verts[index] for index in edge)
-            #print(p1,p2)
-            p1, p2 = camera.project(p1), camera.project(p2)
-            p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
-            p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
-            pygame.draw.line(screen, "black", p1, p2)
         min_select = tuple(min(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
         max_select = tuple(max(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
         meter = 1
@@ -2126,6 +2119,13 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
+        for edge in self.poly.edges:
+            p1, p2 = tuple(self.poly.verts[index] for index in edge)
+            #print(p1,p2)
+            p1, p2 = camera.project(p1), camera.project(p2)
+            p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+            p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+            pygame.draw.line(screen, "black", p1, p2)
         '''
         for d1 in range(3):
             d2, d3 = [i for i in range(3) if i != d1]
