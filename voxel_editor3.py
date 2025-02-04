@@ -2039,7 +2039,6 @@ class Block:
                             except IndexError:
                                 pass
                         components.append(component)
-                shadows = []
                 for component in components:
                     point_set = set()
                     for i in range(len(points)):
