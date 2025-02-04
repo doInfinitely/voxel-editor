@@ -1602,7 +1602,7 @@ class Polyhedron:
         if start is None:
             seen = set()
             for edge in face:
-                if edge in seen:
+                if frozenset(self.verts[index] for index in self.edges[edge]) in seen:
                     continue
                 path = []
                 start = edge
