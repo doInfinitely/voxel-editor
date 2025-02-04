@@ -1587,8 +1587,6 @@ class Polyhedron:
         #print(path, previous, current)
         face = self.faces[face_index]
         #print([self.edges[x] for x in face])
-        if not len(face):
-            return {}
         if path is not None and not Box.colinear(path):
             for x in old_circuits:
                 if not len(set(path)-set(x)):
