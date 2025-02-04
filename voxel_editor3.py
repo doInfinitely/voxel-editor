@@ -7,6 +7,7 @@ import random
 from scipy.optimize import fsolve
 import time
 from multiprocessing import Pool
+import math
 
 def shift(points, displacement=(0,0,0)):
     output = []
@@ -186,7 +187,6 @@ class Box:
                 return True
         return False
     def intersect_segments(edge1, edge2):
-        output = []
         p1, p2 = edge1
         p3, p4 = edge2
         alpha, beta = symbols("alpha beta")
@@ -203,12 +203,12 @@ class Box:
                 beta = None
             try:
                 if alpha is not None and alpha >= 0 and alpha <= 1 and beta is not None and beta >= 0 and beta <= 1:
-                    output.append(tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3)))
+                    return tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3))
             except TypeError:
                     pass
                     #alpha = 0
                     #output.append(tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3)))
-        return output
+        return None
     def intersect(self, edge):
         p1, p2 = edge
         if p1[0] >= self.x_min and p1[0] <= self.x_max and p1[1] >= self.y_min and p1[1] <= self.y_max and p1[2] >= self.z_min and p1[2] <= self.z_max:
@@ -231,12 +231,8 @@ class Box:
             circuits = poly.circuits(face_index)
             circuit = Polyhedron.circuit_cut(circuits)
             interior_circuits = circuits - set([Polyhedron.find_exterior_circuit(circuits)])
-            if circuit[0][0] == circuit[1][0] and circuit[0][0] == circuit[2][0]:
-                if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
-                    return True
-            if circuit[0][1] == circuit[1][1] and circuit[0][1] == circuit[2][1]:
-                if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
-                    return True
+            if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
+                return True
             if circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] > point[2]:
                 projection = (point[0],point[1],circuit[0][2])
                 if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)) and not any(Polyhedron.inside_triangle(y,projection) for x in interior_circuits for y in Polyhedron.triangulate(x)):
@@ -377,8 +373,9 @@ class Box:
             last_intersections = []
             for j, box_point in enumerate(box):
                 if not Box.colinear(set([p1,p2,box[j-1],box_point])):
-                    for intersection in Box.intersect_segments(frozenset([p1,p2]),frozenset([box[j-1],box_point])):
-                        #print("intersection", intersection, p1, p2)
+                    intersection = Box.intersect_segments(frozenset([p1,p2]),frozenset([box[j-1],box_point]))
+                    #print("intersection", intersection, p1, p2)
+                    if intersection is not None:
                         last_intersections.append(intersection)
                 else:
                     if Box.point_on_segment(frozenset([box[j-1],box_point]),p1) and Box.point_on_segment(frozenset([box[j-1],box_point]),p2):
@@ -879,6 +876,7 @@ class Box:
                     break
             else:
                 break
+        faces = [face for face in faces if len(face)]
         verts = list(set(point for face in faces for edge in face for point in edge))
         edges = list(set(frozenset(point for point in edge) for face in faces for edge in face))
         #print('BLAH',edges)
@@ -1018,7 +1016,8 @@ class Box:
             circuit = Polyhedron.circuit_cut(poly.circuits(face_index1))
             if any(self.intersect(edge) for edge in face1):
                 for face_index2, face2 in enumerate(new_faces):
-                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
+                    print(circuit, poly.circuits(face_index1), face1)
+                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
                         temp = set(new_edges)-new_faces[face_index2//2]-new_faces[face_index2//2+1]
                         double_break = False
                         triple_break = False
@@ -1038,7 +1037,7 @@ class Box:
                                         break
                                 for edge1 in edges:
                                     p2 = list(edge1-frozenset([p1]))[0]
-                                    if p2 not in {point for edge in face1 for point in edge} and self.intersect(edge1) and not any(Box.colinear(edge1|edge2) for edge2 in new_edges):
+                                    if p2 not in {point for edge in face1 for point in edge} and self.intersect(edge1):# and not any(Box.colinear(edge1|edge2) for edge2 in new_edges):
                                         double_break = True
                                         break
                             if double_break or triple_break:
@@ -1048,7 +1047,7 @@ class Box:
                                 mapping[face_index2] = set()
                             mapping[face_index2].add(face1)
             for face_index2, face2 in enumerate(new_faces):
-                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
+                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
                     if all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit):
                         if face_index2 not in mapping:
                             mapping[face_index2] = set()
@@ -1888,6 +1887,16 @@ class Polyhedron:
                     break
             else:
                 break
+    def circuit_overlap(circuits1, circuits2):
+        circuit1 = Polyhedron.circuit_cut(circuits1)
+        circuit2 = Polyhedron.circuit_cut(circuits2)
+        if any(Box.intersect_segments(frozenset([circuit1[i-1],x]),frozenset([circuit2[j-1],y])) for i,x in enumerate(circuit1) for j,y in enumerate(circuit2)):
+            return True
+        if any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit1) for y in circuit2):
+            return True
+        if any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit2) for y in circuit1):
+            return True
+        return False
 
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
@@ -1917,6 +1926,7 @@ class Block:
         self.select = [0,0,0,0]
         self.unit = unit
         self.select_size = [unit,unit,unit]
+        self.meters = {1}
         self.polygons = set()
     def flip(self):
         self.polygons = set()
@@ -1973,20 +1983,517 @@ class Block:
         #print('face drawing time', time.time()-start_time)
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
-            centroid = ((p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2)
-            distance = sum((centroid[i]-camera.focal[i])**2 for i in range(3))
             #print(p1,p2)
             p1, p2 = camera.project(p1), camera.project(p2)
             p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
             p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
             pygame.draw.line(screen, "black", p1, p2)
+        min_select = tuple(min(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
+        max_select = tuple(max(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
+        meter = 1
+        for x in self.meters:
+            meter *= x
+        for d1 in range(3):
+            for mult in [1,-1]:
+                d2, d3 = [i for i in range(3) if i != d1]
+                points = [[[0 for i in range(3)] for j in range(abs(int(self.select_size[d3]/meter)))] for k in range(abs(int(self.select_size[d2]/meter)))]
+                for i in range(len(points)):
+                    for j in range(len(points[i])):
+                        points[i][j][d2] = min_select[d2] + meter*(i+.5)
+                        points[i][j][d3] = min_select[d3] + meter*(j+.5)
+                        points[i][j][d1] = mult*float('inf')
+                for face_index,face in enumerate(self.poly.faces):
+                    circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                    if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1]:
+                        for point_row in points:
+                            for point in point_row:
+                                projection = list(point)
+                                projection[d1] = circuit[0][d1]
+                                projection = tuple(projection)
+                                if mult == 1:
+                                    select = max_select
+                                else:
+                                    select = min_select
+                                if mult*circuit[0][d1] < mult*point[d1] and mult*circuit[0][d1] >= mult*select[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                                   point[d1] = circuit[0][d1]
+                seen = set()
+                components = []
+                for i in range(len(points)):
+                    for j in range(len(points[i])):
+                        if (i,j) in seen:
+                            continue
+                        if points[i][j][d1] == float('inf') or points[i][j][d1] == -float('inf'):
+                            continue
+                        component = {(i,j)}
+                        seen.add((i,j))
+                        queue = [(i-1,j),(i,j-1),(i+1,j),(i,j+1)]
+                        while len(queue):
+                            k,l = queue.pop()
+                            if (k,l) in seen:
+                                continue
+                            try:
+                                if k >= 0 and l >= 0 and points[i][j][d1] == points[k][l][d1]:
+                                    component.add((k,l))
+                                    seen.add((k,l))
+                                    queue.extend([(k-1,l),(k,l-1),(k+1,l),(k,l+1)])
+                            except IndexError:
+                                pass
+                        components.append(component)
+                shadows = []
+                for component in components:
+                    point_set = set()
+                    for i in range(len(points)):
+                        for j in range(len(points[i])):
+                            if (i,j) in component:
+                                if (i-1,j) not in component or (i,j-1) not in component or (i-1,j-1) not in component:
+                                    point = list(points[i][j])
+                                    point[d2] = min_select[d2] + i*meter
+                                    point[d3] = min_select[d3] + j*meter
+                                    point = tuple(point)
+                                    point_set.add(point)
+                                if (i-1,j) not in component or (i,j+1) not in component or (i-1,j+1) not in component:
+                                    point = list(points[i][j])
+                                    point[d2] = min_select[d2] + i*meter
+                                    point[d3] = min_select[d3] + (j+1)*meter
+                                    point = tuple(point)
+                                    point_set.add(point)
+                                if (i+1,j) not in component or (i,j-1) not in component or (i+1,j-1) not in component:
+                                    point = list(points[i][j])
+                                    point[d2] = min_select[d2] + (i+1)*meter
+                                    point[d3] = min_select[d3] + j*meter
+                                    point = tuple(point)
+                                    point_set.add(point)
+                                if (i+1,j) not in component or (i,j+1) not in component or (i+1,j+1) not in component:
+                                    point = list(points[i][j])
+                                    point[d2] = min_select[d2] + (i+1)*meter
+                                    point[d3] = min_select[d3] + (j+1)*meter
+                                    point = tuple(point)
+                                    point_set.add(point)
+                    point = tuple(float('inf') for i in range(3))
+                    for x in point_set:
+                        if (x[d2],x[d3]) < (point[d2],point[d3]):
+                            point = x
+                    path = []
+                    '''
+                    while True:
+                        triple_break = False
+                        for x in point_set:
+                            for y in point_set:
+                                if x != y:
+                                    for z in point_set:
+                                        if x != z and y != z:
+                                            if Box.colinear({x,y,z}):
+                                                point_set.remove(sorted([(distance(x,y),z), (distance(x,z),y), (distance(y,z),x)])[-1][1])
+                                                triple_break = True
+                                                break
+                                if triple_break:
+                                    break
+                            if triple_break:
+                                break
+                        else:
+                            break
+                    '''
+                    point_list = list(point_set)
+                    rotated_point_mapping = {x:x for x in point_list}
+                    reverse_point_mapping = {rotated_point_mapping[key]:key for key in rotated_point_mapping}
+                    angle = [0,0,0]
+                    while not len(path) or point != path[0]:
+                        path.append(point)
+                        keys = [key for key in rotated_point_mapping]
+                        if len(path) > 1:
+                            angle[d1] += math.atan2(reverse_point_mapping[path[-1]][d3],reverse_point_mapping[path[-1]][d2])
+                            rotated_point_mapping = {x:rotated_point_mapping[keys[i]] for i,x in enumerate(rotate([(y[0]-reverse_point_mapping[path[-1]][0],y[1]-reverse_point_mapping[path[-1]][1],y[2]-reverse_point_mapping[path[-1]][2]) for y in keys], angle))}
+                        else:
+                            rotated_point_mapping = {(x[0]-reverse_point_mapping[path[-1]][0],x[1]-reverse_point_mapping[path[-1]][1],x[2]-reverse_point_mapping[path[-1]][2]):rotated_point_mapping[x] for x in keys}
+                        reverse_point_mapping = {rotated_point_mapping[key]:key for key in rotated_point_mapping}
+                        gift_wrap = []
+                        for key in rotated_point_mapping:
+                            origin = (0,0,0)
+                            if key == origin:
+                                continue
+                            gift_wrap.append((math.atan2(key[d3],key[d2]),distance(key,origin),rotated_point_mapping[key]))
+                        maxi = (-float('inf'),-float('inf'),None)
+                        for x in gift_wrap:
+                            if x > maxi:
+                                maxi = x
+                        point = maxi[2]
+                    i = 0
+                    while i < len(path):
+                        if Box.colinear({path[i-1],path[i],path[(i+1)%len(path)]}):
+                            del path[i]
+                        else:
+                            i += 1
+                    path = [camera.project(x) for x in path]
+                    path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
+                    color = "gray"
+                    pygame.draw.polygon(screen, color, path)
+        '''
+        for d1 in range(3):
+            d2, d3 = [i for i in range(3) if i != d1]
+            points = [[0 for i in range(3)] for j in range(4)]
+            points[0][d2] = min_select[d2]
+            points[0][d3] = min_select[d3]
+            points[0][d1] = float('inf')
+            points[1][d2] = max_select[d2]
+            points[1][d3] = min_select[d3]
+            points[1][d1] = float('inf')
+            points[2][d2] = max_select[d2]
+            points[2][d3] = max_select[d3]
+            points[2][d1] = float('inf')
+            points[3][d2] = min_select[d2]
+            points[3][d3] = max_select[d3]
+            points[3][d1] = float('inf')
+            circuits = [None for i in range(4)]
+            for face_index,face in enumerate(self.poly.faces):
+                circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1]:
+                    for index, point in enumerate(points):
+                        projection = list(point)
+                        projection[d1] = circuit[0][d1]
+                        projection = tuple(projection)
+                        if circuit[0][d1] < point[d1] and circuit[0][d1] >= max_select[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                            point[d1] = circuit[0][d1]
+                            circuits[index] = circuit
+            for point_index,point in enumerate(points):
+                if point_index > 0 and points[point_index-1][d1] == point[d1]:
+                    continue
+                if point[d1] == float('inf'):
+                    continue
+                shadow = []
+                last_j = None
+                last_circuit = None
+                last_intersection = None
+                shadow.append(tuple(point))
+                for i in range(1,5):
+                    if points[(point_index+i)%4][d1] == point[d1]:
+                        if points[(point_index+i-1)%4][d1] < point[d1]:
+                            projection = list(points[(point_index+i)%4])
+                            projection[d1] = last_circuit[d1]
+                            projection = tuple(projection)
+                            temp = list(points[(point_index+i-1)%4])
+                            temp[d1] = projection[d1]
+                            temp = tuple(temp)
+                            for k,z in enumerate(last_circuit):
+                                intersection = Polyhedron.intersect_segments(frozenset([projection,temp]),frozenset([last_circuit[k-1],z]))
+                                if intersection is not None:
+                                    break
+                            j = last_j
+                            if last_circuit[j-1] == last_intersection or last_circuit[j][d2] >= min_select[d2] and last_circuit[j][d2] <= max_select[d2] and last_circuit[j][d3] >= min_select[d3] and last_circuit[j][d3] <= max_select[d3]:
+                                while j != k:
+                                    temp = list(last_circuit[j])
+                                    temp[d1] = point[d1]
+                                    temp = tuple(temp)
+                                    shadow.append(temp)
+                                    j += 1
+                                    j %= len(last_circuit)
+                            elif last_circuit[j] == last_intersection or last_circuit[j-1][d2] >= min_select[d2] and last_circuit[j-1][d2] <= max_select[d2] and last_circuit[j-1][d3] >= min_select[d3] and last_circuit[j-1][d3] <= max_select[d3]:
+                                j -= 1
+                                while j != k:
+                                    temp = list(last_circuit[j])
+                                    temp[d1] = point[d1]
+                                    temp = tuple(temp)
+                                    shadow.append(temp)
+                                    j -= 1
+                                    j %= len(last_circuit)
+                            shadow.append(intersection)
+                        if points[(point_index+i-1)%4][d1] > point[d1]:
+                            temp = list(points[(point_index+i-1)%4])
+                            temp[d1] = point[d1]
+                            temp = tuple(temp)
+                            for k,z in enumerate(circuits[point_index]):
+                                intersection = Box.intersect_segments(frozenset([tuple(points[(point_index+i)%4]),temp]),frozenset([circuits[point_index][k-1],z]))
+                                if intersection is not None:
+                                    break
+                            j = last_j
+                            angle_sum1 = 0
+                            for l,w in enumerate(circuits[point_index]):
+                                vec1 = tuple(w[i]-circuits[point_index][l-1][i] for i in range(3))
+                                vec2 = tuple(circuits[point_index][(l+1)%len(circuits[point_index])][i]-w[i] for i in range(3))
+                                angle_sum1 += math.atan((vec2[d2]-vec1[d2])/(vec2[d3]-vec1[d3]))
+                            angle_sum2 = 0
+                            for l,w in enumerate(points):
+                                vec1 = tuple(w[i]-points[l-1][i] for i in range(3))
+                                vec2 = tuple(points[(l+1)%len(points)][i]-w[i] for i in range(3))
+                                angle_sum2 += math.atan((vec2[d2]-vec1[d2])/(vec2[d3]-vec1[d3]))
+                            vec3 = tuple(points[(point_index+i)%4][i]-points[(point_index+i-1)%4][i] for i in range(3))
+                            if copysign(1,angle_sum1) == copysign(1,angle_sum2):
+                                if circuits[point_index][j]!=last_intersection and (circuits[point_index][j][d2] >= min_select[d2] and circuits[point_index][j][d2] <= max_select[d2] and circuits[point_index][j][d3] >= min_select[d3] and circuits[point_index][j][d3] <= max_select[d3]):
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j += 1
+                                        j %= len(circuits[point_index])
+                                elif circuits[point_index][j-1]!=last_intersection and (circuits[point_index][j-1][d2] >= min_select[d2] and circuits[point_index][j-1][d2] <= max_select[d2] and circuits[point_index][j-1][d3] >= min_select[d3] and circuits[point_index][j-1][d3] <= max_select[d3]):
+                                    j -= 1
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j -= 1
+                                        j %= len(circuits[point_index])
+                            else:
+                                if circuits[point_index][j]!=last_intersection and (circuits[point_index][j][d2] >= min_select[d2] and circuits[point_index][j][d2] <= max_select[d2] and circuits[point_index][j][d3] >= min_select[d3] and circuits[point_index][j][d3] <= max_select[d3]):
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j -= 1
+                                        j %= len(circuits[point_index])
+                                elif circuits[point_index][j-1]!=last_intersection and (circuits[point_index][j-1][d2] >= min_select[d2] and circuits[point_index][j-1][d2] <= max_select[d2] and circuits[point_index][j-1][d3] >= min_select[d3] and circuits[point_index][j-1][d3] <= max_select[d3]):
+                                    j += 1
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j += 1
+                                        j %= len(circuits[point_index])
+                            if intersection != shadow[-1]:
+                                shadow.append(intersection)
+                        shadow.append(tuple(points[(point_index+i)%4]))
+                    if points[(point_index+i)%4][d1] > point[d1] and points[(point_index+i-1)%4][d1] == point[d1]:
+                        projection = list(points[(point_index+i)%4])
+                        projection[d1] = point[d1]
+                        projection = tuple(projection)
+                        for j,y in enumerate(circuits[point_index]):
+                            intersection = Box.intersect_segments(frozenset([projection,shadow[-1]]),frozenset([circuits[point_index][j-1],y]))
+                            if intersection is not None:
+                                break
+                        if intersection != shadow[-1]:
+                            shadow.append(intersection)
+                        last_j = j
+                        last_intersection = intersection
+                    if points[(point_index+i)%4][d1] < point[d1] and points[(point_index+i-1)%4][d1] == point[d1]:
+                        end_point = list(points[(point_index+i)%4])
+                        end_point[d1] = point[d1]
+                        end_point = tuple(end_point)
+                        for face_index,face in enumerate(self.poly.faces):
+                            circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                            if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1] and circuit[0][d1] >= max_select[d1] and circuit[0][d1] < point[d1]:
+                                projection = list(points[(point_index+i)%4])
+                                projection[d1] = circuits[point_index][d1]
+                                projection = tuple(projection)
+                                temp = list(shadow[-1])
+                                temp[d1] = projection[d1]
+                                temp = tuple(temp)
+                                if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                                    for j,y in enumerate(circuits[point_index]):
+                                        intersection = Box.intersect_segments(frozenset([projection,temp]),frozenset([circuits[point_index][j-1],y]))
+                                        if intersection is not None:
+                                            break
+                                    temp = list(intersection)
+                                    temp[d1] = point[d1]
+                                    temp = tuple(temp)
+                                    if distance(temp,shadow[-1]) < distance(end_point,shadow[-1]):
+                                        end_point = temp
+                                        last_circuit = circuit
+                                        last_j = j
+                                        last_intersection = intersection
+                        shadow.append(end_point)
+                        for j,y in enumerate(circuits[point_index]):
+                            intersection = Box.intersect_segments(frozenset([tuple(point),shadow[-1]]),frozenset([circuits[point_index][j-1],y]))
+                            if intersection is not None:
+                                break
+                        shadow.append(intersection)
+                del shadow[-1]
+                if shadow[-1] == shadow[0]:
+                    del shadow[-1]
+                if len(shadow) > 1:
+                    print(points, shadow, shadow[-1]==shadow[-2])
+                if len({x for x in circuits[point_index] if x[d2] >= min_select[d2] and x[d2] <= max_select[d2] and x[d3] >= min_select[d3] and x[d3] <= max_select[d3]}) > 2:
+                    if len(shadow) > 2:
+                        shadow = [camera.project(x) for x in shadow]
+                        shadow = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in shadow]
+                        color = "gray"
+                        pygame.draw.polygon(screen, color, shadow)
+            points = [[0 for i in range(3)] for j in range(4)]
+            points[0][d2] = min_select[d2]
+            points[0][d3] = min_select[d3]
+            points[0][d1] = -float('inf')
+            points[1][d2] = max_select[d2]
+            points[1][d3] = min_select[d3]
+            points[1][d1] = -float('inf')
+            points[2][d2] = max_select[d2]
+            points[2][d3] = max_select[d3]
+            points[2][d1] = -float('inf')
+            points[3][d2] = min_select[d2]
+            points[3][d3] = max_select[d3]
+            points[3][d1] = -float('inf')
+            circuits = [None for i in range(4)]
+            for face_index,face in enumerate(self.poly.faces):
+                circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1]:
+                    for index, point in enumerate(points):
+                        projection = list(point)
+                        projection[d1] = circuit[0][d1]
+                        projection = tuple(projection)
+                        if circuit[0][d1] > point[d1] and circuit[0][d1] <= min_select[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                               point[d1] = circuit[0][d1]
+                               circuits[index] = circuit
+            for point_index,point in enumerate(points):
+                if point_index > 0 and points[point_index-1][d1] == point[d1]:
+                    continue
+                if point[d1] == -float('inf'):
+                    continue
+                shadow = []
+                last_j = None
+                last_circuit = None
+                shadow.append(tuple(point))
+                for i in range(1,5):
+                    if points[(point_index+i)%4][d1] == point[d1]:
+                        if points[(point_index+i-1)%4][d1] > point[d1]:
+                            projection = list(points[(point_index+i)%4])
+                            projection[d1] = last_circuit[d1]
+                            projection = tuple(projection)
+                            temp = list(points[(point_index+i-1)%4])
+                            temp[d1] = projection[d1]
+                            temp = tuple(temp)
+                            for k,z in enumerate(last_circuit):
+                                intersection = Polyhedron.intersect_segments(frozenset([projection,temp]),frozenset([last_circuit[k-1],z]))
+                                if intersection is not None:
+                                    break
+                            j = last_j
+                            if last_circuit[j][d2] >= min_select[d2] and last_circuit[j][d2] <= max_select[d2] and last_circuit[j][d3] >= min_select[d3] and last_circuit[j][d3] <= max_select[d3]:
+                                while j != k:
+                                    temp = list(last_circuit[j])
+                                    temp[d1] = point[d1]
+                                    shadow.append(temp)
+                                    temp = tuple(temp)
+                                    j += 1
+                                    j %= len(last_circuit)
+                            elif last_circuit[j-1][d2] >= min_select[d2] and last_circuit[j-1][d2] <= max_select[d2] and last_circuit[j-1][d3] >= min_select[d3] and last_circuit[j-1][d3] <= max_select[d3]:
+                                j -= 1
+                                while j != k:
+                                    temp = list(last_circuit[j])
+                                    temp[d1] = point[d1]
+                                    shadow.append(temp)
+                                    temp = tuple(temp)
+                                    j -= 1
+                                    j %= len(last_circuit)
+                            shadow.append(intersection)
+                        if points[(point_index+i-1)%4][d1] < point[d1]:
+                            temp = list(points[(point_index+i-1)%4])
+                            temp[d1] = point[d1]
+                            temp = tuple(temp)
+                            for k,z in enumerate(circuits[point_index]):
+                                intersection = Box.intersect_segments(frozenset([tuple(points[(point_index+i)%4]),temp]),frozenset([circuits[point_index][k-1],z]))
+                                if intersection is not None:
+                                    break
+                            j = last_j
+                            angle_sum1 = 0
+                            for l,w in enumerate(circuits[point_index]):
+                                vec1 = tuple(w[i]-circuits[point_index][l-1][i] for i in range(3))
+                                vec2 = tuple(circuits[point_index][(l+1)%len(circuits[point_index])][i]-w[i] for i in range(3))
+                                angle_sum1 += math.atan((vec2[d2]-vec1[d2])/(vec2[d3]-vec1[d3]))
+                            angle_sum2 = 0
+                            for l,w in enumerate(points):
+                                vec1 = tuple(w[i]-points[l-1][i] for i in range(3))
+                                vec2 = tuple(points[(l+1)%len(points)][i]-w[i] for i in range(3))
+                                angle_sum2 += math.atan((vec2[d2]-vec1[d2])/(vec2[d3]-vec1[d3]))
+                            if copysign(1,angle_sum1) == copysign(1,angle_sum2):
+                                if circuits[point_index][j]!=last_intersection and (circuits[point_index][j][d2] >= min_select[d2] and circuits[point_index][j][d2] <= max_select[d2] and circuits[point_index][j][d3] >= min_select[d3] and circuits[point_index][j][d3] <= max_select[d3]):
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j += 1
+                                        j %= len(circuits[point_index])
+                                elif circuits[point_index][j-1]!=last_intersection and (circuits[point_index][j-1][d2] >= min_select[d2] and circuits[point_index][j-1][d2] <= max_select[d2] and circuits[point_index][j-1][d3] >= min_select[d3] and circuits[point_index][j-1][d3] <= max_select[d3]):
+                                    j -= 1
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j -= 1
+                                        j %= len(circuits[point_index])
+                            else:
+                                if circuits[point_index][j]!=last_intersection and (circuits[point_index][j][d2] >= min_select[d2] and circuits[point_index][j][d2] <= max_select[d2] and circuits[point_index][j][d3] >= min_select[d3] and circuits[point_index][j][d3] <= max_select[d3]):
+                                    j -= 1
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j -= 1
+                                        j %= len(circuits[point_index])
+                                elif circuits[point_index][j-1]!=last_intersection and (circuits[point_index][j-1][d2] >= min_select[d2] and circuits[point_index][j-1][d2] <= max_select[d2] and circuits[point_index][j-1][d3] >= min_select[d3] and circuits[point_index][j-1][d3] <= max_select[d3]):
+                                    while j != k:
+                                        temp = list(circuits[point_index][j])
+                                        temp[d1] = point[d1]
+                                        temp = tuple(temp)
+                                        shadow.append(temp)
+                                        j += 1
+                                        j %= len(circuits[point_index])
+                            if intersection != shadow[-1]:
+                                shadow.append(intersection)
+                        shadow.append(tuple(points[(point_index+i)%4]))
+                    if points[(point_index+i)%4][d1] < point[d1] and points[(point_index+i-1)%4][d1] == point[d1]:
+                        projection = list(points[(point_index+i)%4])
+                        projection[d1] = point[d1]
+                        projection = tuple(projection)
+                        for j,y in enumerate(circuits[point_index]):
+                            intersection = Box.intersect_segments(frozenset([projection,shadow[-1]]),frozenset([circuits[point_index][j-1],y]))
+                            if intersection is not None:
+                                break
+                        shadow.append(intersection)
+                        last_j = j
+                        last_intersection = intersection
+                    if points[(point_index+i)%4][d1] > point[d1] and points[(point_index+i-1)%4][d1] == point[d1]:
+                        end_point = list(points[(point_index+i)%4])
+                        end_point[d1] = point[d1]
+                        end_point = tuple(end_point)
+                        for face_index,face in enumerate(self.poly.faces):
+                            circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                            if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1] and circuit[0][d1] <= min_select[d1] and circuit[0][d1] > point[d1]:
+                                projection = list(points[(point_index+i)%4])
+                                projection[d1] = circuits[point_index][d1]
+                                projection = tuple(projection)
+                                temp = list(shadow[-1])
+                                temp[d1] = projection[d1]
+                                temp = tuple(temp)
+                                if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                                    for j,y in enumerate(circuits[point_index]):
+                                        intersection = Box.intersect_segments(frozenset([projection,temp]),frozenset([circuits[point_index][j-1],y]))
+                                        if intersection is not None:
+                                            break
+                                    temp = list(intersection)
+                                    temp[d1] = point[d1]
+                                    temp = tuple(temp)
+                                    if distance(temp,shadow[-1]) < distance(end_point,shadow[-1]):
+                                        end_point = temp
+                                        last_circuit = circuit
+                                        last_j = j
+                        shadow.append(end_point)
+                        for j,y in enumerate(circuits[point_index]):
+                            intersection = Box.intersect_segments(frozenset([tuple(point),shadow[-1]]),frozenset([circuits[point_index][j-1],y]))
+                            if intersection is not None:
+                                break
+                        shadow.append(intersection)
+                del shadow[-1]
+                if shadow[-1] == shadow[0]:
+                    del shadow[-1]
+                if len(shadow) > 1:
+                    print(points, shadow, shadow[-1]==shadow[-2])
+                if len({x for x in circuits[point_index] if x[d2] >= min_select[d2] and x[d2] <= max_select[d2] and x[d3] >= min_select[d3] and x[d3] <= max_select[d3] and x[d1] == point[d1]}) > 2:
+                    if len(shadow) > 2:
+                        shadow = [camera.project(x) for x in shadow]
+                        shadow = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in shadow]
+                        color = "gray"
+                        pygame.draw.polygon(screen, color, shadow)
+        '''
         width, height, depth = self.size
         if self.select[3] == 0:
-            axes = get_cube((width/2,self.unit/2+self.select[1],depth/2), factors=(width,self.unit,depth))
+            axes = get_cube((width/2,abs(self.select_size[1])/2+min(self.select[1],self.select[1]+self.select_size[1]),depth/2), factors=(width,abs(self.select_size[1]),depth))
         elif self.select[3] == 1:
-            axes = get_cube((width/2,height/2,self.unit/2+self.select[2]), factors=(width,height,self.unit))
+            axes = get_cube((width/2,height/2,abs(self.select_size[2])/2+min(self.select[2],self.select[2]+self.select_size[2])), factors=(width,height,abs(self.select_size[2])))
         elif self.select[3] == 2:
-            axes = get_cube((self.unit/2+self.select[0],height/2,depth/2), factors=(self.unit,height,depth))
+            axes = get_cube((abs(self.select_size[0])/2+min(self.select[0],self.select[0]+self.select_size[0]),height/2,depth/2), factors=(abs(self.select_size[0]),height,depth))
         for edge in axes.edges:
             p1, p2 = tuple(axes.verts[index] for index in edge)
             p1, p2 = camera.project(p1), camera.project(p2)
@@ -2029,16 +2536,21 @@ class Block:
                     p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                     p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                     pygame.draw.line(screen, (128,128,128), p1, p2)
-    def subdivide(self, mult):
-        block = Block(self.size[0], self.size[1], self.size[2], self.unit*mult)
+
+    def reunit(self, unit):
+        block = Block(self.size[0], self.size[1], self.size[2], unit)
         block.select = self.select
         block.poly = self.poly
+        block.meters = self.meters
         block.polygons = self.polygons
         return block
     def select_by_void(self):
         if not len(self.poly.verts):
             return True
         points = [(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for y in (self.select[1],self.select[1]+self.unit) for z in (self.select[2],self.select[2]+self.unit)]
+        for point in points:
+            if not Box.inside_polyhedron(self.poly, point):
+                return True
         for vert in self.poly.verts:
             if self.select[0] <= vert[0] and vert[0] <= self.select[0]+self.unit and self.select[1] <= vert[1] and vert[1] <= self.select[1]+self.unit and self.select[2] <= vert[2] and vert[2] <= self.select[2]+self.unit:
                 return True
@@ -2048,12 +2560,18 @@ class Block:
                 if all(Box.point_on_segment(edge1, point) for point in edge2) or all(Box.point_on_segment(edge2, point) for point in edge1):
                     return True
         faces = []
-        faces.extend([{(x,y,z) for y in (self.select[1],self.select[1]+self.unit) for z in (self.select[2],self.select[2]+self.unit)} for x in (self.select[0],self.select[0]+self.unit)])
-        faces.extend([{(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for z in (self.select[2],self.select[2]+self.unit)} for y in (self.select[1],self.select[1]+self.unit)])
-        faces.extend([{(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for y in (self.select[1],self.select[1]+self.unit)} for z in (self.select[2],self.select[2]+self.unit)])
+        faces.extend([[(x,y,z) for y in (self.select[1],self.select[1]+self.unit) for z in (self.select[2],self.select[2]+self.unit)] for x in (self.select[0],self.select[0]+self.unit)])
+        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
+        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
+        faces.extend([[(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for z in (self.select[2],self.select[2]+self.unit)] for y in (self.select[1],self.select[1]+self.unit)])
+        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
+        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
+        faces.extend([[(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for y in (self.select[1],self.select[1]+self.unit)] for z in (self.select[2],self.select[2]+self.unit)])
+        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
+        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
         for face1 in faces:
-            for face2 in self.poly.faces:
-                if Box.coplanar(face1|{self.poly.verts[index] for edge_index in face2 for index in self.poly.edges[edge_index]}):
+            for face_index, face2 in enumerate(self.poly.faces):
+                if Box.coplanar(set(face1)|{self.poly.verts[index] for edge_index in face2 for index in self.poly.edges[edge_index]}) and Polyhedron.circuit_overlap((face1,),self.poly.circuits(face_index)):
                     return True
         return False
 
@@ -2117,13 +2635,16 @@ if __name__ == "__main__":
                 divisor_keys = [pygame.K_2,pygame.K_3,pygame.K_4,pygame.K_5,pygame.K_6,pygame.K_7,pygame.K_8,pygame.K_9,pygame.K_0]
                 if event.key in divisor_keys:
                     if not meta_down:
-                        block = block.subdivide(1/(divisor_keys.index(event.key)+2))
+                        block = block.reunit(block.unit/(divisor_keys.index(event.key)+2))
                         meters = remeter(meters, block.unit)
+                        block.meters = meters
                     else:
-                        block = block.subdivide(divisor_keys.index(event.key)+2)
+                        block = block.reunit(block.unit*(divisor_keys.index(event.key)+2))
                         block.select[0] = block.select[0]//block.unit*block.unit
                         block.select[1] = block.select[1]//block.unit*block.unit
                         block.select[2] = block.select[2]//block.unit*block.unit
+                if event.key == pygame.K_1:
+                    block = block.reunit(1)
                 if event.key == pygame.K_BACKSPACE:
                     delete = not delete
                     #filename = input("Input filename: ")
@@ -2168,19 +2689,54 @@ if __name__ == "__main__":
                     else:
                         if block.select[3] == 0:
                             block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            if block.select_size[index] == 0:
+                                block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                                if block.select_size[index] == block.unit:
+                                    block.select[index] -= block.unit
+                                    block.select_size[index] += block.unit
+                                else:
+                                    block.select[index] += block.unit
+                                    block.select_size[index] -= block.unit
                         elif block.select[3] == 1:
                             block.select_size[1] += direction*block.unit
+                            if block.select_size[1] == 0:
+                                block.select_size[1] = direction*block.unit
+                                if block.select_size[1] == block.unit:
+                                    block.select[1] -= block.unit
+                                    block.select_size[1] += block.unit
+                                else:
+                                    block.select[1] += block.unit
+                                    block.select_size[1] -= block.unit
                         elif block.select[3] == 2:
                             block.select_size[1] += direction*block.unit
-                        if block.select_size[index] == 0:
-                            block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
-                        if block.select_size[1] == 0:
-                            block.select_size[1] = direction*block.unit
+                            if block.select_size[1] == 0:
+                                block.select_size[1] = direction*block.unit
+                                if block.select_size[1] == block.unit:
+                                    block.select[1] -= block.unit
+                                    block.select_size[1] += block.unit
+                                else:
+                                    block.select[1] += block.unit
+                                    block.select_size[1] -= block.unit
                         for i in range(3):
+                            if block.select_size[i] == 0:
+                                block.select_size[i] = direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                                if block.select_size[i] == block.unit:
+                                    block.select[i] -= block.unit
+                                else:
+                                    block.select[i] += block.unit
+                                    block.select_size[i] -= block.unit
                             if block.select[i]+block.select_size[i] > block.size[i]:
                                 block.select_size[i] = block.size[i]-block.select[i]
+                                if block.select_size[i] == 0:
+                                    block.select_size[i] -= block.unit
                             if block.select[i]+block.select_size[i] < 0:
                                 block.select_size[i] = -block.select[i]
+                                if block.select_size[i] == 0:
+                                    block.select_size[i] += block.unit
+                            if block.select[i] < 0:
+                                block.select[i] += block.unit
+                            if block.select[i] > block.size[i]:
+                                block.select[i] -= block.unit
                 if event.key in {pygame.K_RIGHT, pygame.K_LEFT}:
                     index = 0
                     if not z_forward:
@@ -2208,19 +2764,43 @@ if __name__ == "__main__":
                             block.select_size[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
                             if block.select_size[index] == 0:
                                 block.select_size[index] = direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                                if block.select_size[index] == block.unit:
+                                    block.select[index] -= block.unit
+                                    block.select_size[index] += block.unit
+                                else:
+                                    block.select[index] += block.unit
+                                    block.select_size[index] -= block.unit
                         elif block.select[3] == 1:
                             block.select_size[0] += direction*dir_mult1*block.unit
                             if block.select_size[0] == 0:
-                                block.select_size[0] = direction*dir_mult1*block.unit
+                                block.select_size[0] = -direction*dir_mult1*block.unit
+                                if block.select_size[0] == block.unit:
+                                    block.select[0] -= block.unit
+                                    block.select_size[0] += block.unit
+                                else:
+                                    block.select[0] += block.unit
+                                    block.select_size[0] -= block.unit
                         elif block.select[3] == 2:
                             block.select_size[2] -= direction*dir_mult2*block.unit
                             if block.select_size[2] == 0:
                                 block.select_size[2] = -direction*dir_mult2*block.unit
+                                if block.select_size[2] == block.unit:
+                                    block.select[2] -= block.unit
+                                    block.select_size[2] += block.unit
+                                else:
+                                    block.select[2] += block.unit
+                                    block.select_size[2] -= block.unit
                         for i in [0,2]:
                             if block.select[i]+block.select_size[i] > block.size[i]:
                                 block.select_size[i] = block.size[i]-block.select[i]
                             if block.select[i]+block.select_size[i] < 0:
                                 block.select_size[i] = -block.select[i]
+                                if block.select_size[i] == 0:
+                                    block.select_size[i] += block.unit
+                            if block.select[i] < 0:
+                                block.select[i] += block.unit
+                            if block.select[i] > block.size[i]:
+                                block.select[i] -= block.unit
                 if event.key == pygame.K_LSHIFT:
                     block.select[3] = (block.select[3]-1)%3
                 if event.key == pygame.K_RSHIFT:
@@ -2257,7 +2837,7 @@ if __name__ == "__main__":
                     block.poly.round_verts(lambda x: round_point_meter(x, meters))
                     block.flip()
                     print(meters)
-                    block.select = [block.select[0]+block.select_size[0]-block.unit,block.select[1]+block.select_size[1]-block.unit,block.select[2]+block.select_size[2]-block.unit,block.select[3]]
+                    block.select = [block.select[0]+block.select_size[0]-(block.unit if block.select_size[0] > 0 else 0),block.select[1]+block.select_size[1]-(block.unit if block.select_size[1] > 0 else 0),block.select[2]+block.select_size[2]-(block.unit if block.select_size[2] > 0 else 0),block.select[3]]
                     block.select_size = [block.unit,block.unit,block.unit]
                 if event.key in {pygame.K_LMETA, pygame.K_RMETA}:
                     meta_down = False
