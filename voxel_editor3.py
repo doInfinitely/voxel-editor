@@ -1587,10 +1587,10 @@ class Polyhedron:
         #print(path, previous, current)
         face = self.faces[face_index]
         #print([self.edges[x] for x in face])
-        if path is not None and not Box.colinear(path):
+        if path is not None:
             for x in old_circuits:
                 if not len(set(path)-set(x)):
-                    return {}
+                    return set()
         edge_lookup = dict()
         for edge_index in face:
             edge = self.edges[edge_index]
@@ -1608,9 +1608,9 @@ class Polyhedron:
                 start = edge
                 point = list(self.edges[start])[0]
                 path.append(self.verts[point])
-                temp = list(edge_lookup[point] - set([self.edges[start]]))
-                for i in range(len(temp)):
-                    current = self.edges.index(temp[i])
+                temp = edge_lookup[point] - set([self.edges[start]])
+                for y in temp:
+                    current = self.edges.index(y)
                     output = self.circuits(face_index, start, start, current, path, circuits)
                     circuits.update(output)
                     for circuit in output:
@@ -1625,9 +1625,9 @@ class Polyhedron:
             path.append(self.verts[point])
             previous = current
             temp = list(edge_lookup[point]-set([self.edges[previous]]))
-            for i in range(len(temp)):
-                if Box.coplanar(set([round_point(x) for x in path])|{round_point(self.verts[x]) for x in temp[i]}):
-                    current = self.edges.index(temp[i])
+            for y in temp:
+                if Box.coplanar(set([round_point(x) for x in path])|{round_point(self.verts[x]) for x in y}):
+                    current = self.edges.index(y)
                     circuits.update(self.circuits(face_index, start, previous, current, path, old_circuits|circuits))
         circuits_list = list(circuits)
         for i,x in enumerate(circuits_list):
@@ -1683,25 +1683,16 @@ class Polyhedron:
     def clip_ear(circuit):
         is_convex = Polyhedron.convex_angles(circuit)
         #print(circuit, is_convex)
-        for i in range(len(circuit)):
-            if is_convex[i]:
-                for j,y in enumerate(circuit):
-                    if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
-                        if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and y not in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]:
-                            #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
-                            break
-                else:
-                    return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple([x for k,x in enumerate(circuit) if k != i])
-        is_convex = [not x for x in is_convex]
-        for i in range(len(circuit)):
-            if is_convex[i]:
-                for j,y in enumerate(circuit):
-                    if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
-                        if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and y not in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]:
-                            #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
-                            break
-                else:
-                    return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple([x for k,x in enumerate(circuit) if k != i])
+        for is_convex in [is_convex, [not x for x in is_convex]]:
+            for i in range(len(circuit)):
+                if is_convex[i]:
+                    for j,y in enumerate(circuit):
+                        if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
+                            if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and y not in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]:
+                                #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
+                                break
+                    else:
+                        return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple([x for k,x in enumerate(circuit) if k != i])
     def triangulate(circuit):
         #print(circuit)
         output = []
