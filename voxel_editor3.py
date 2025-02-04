@@ -1594,7 +1594,7 @@ class Polyhedron:
         edge_lookup = dict()
         for edge_index in face:
             edge = self.edges[edge_index]
-            for index in self.edges[edge_index]:
+            for index in edge:
                 if index not in edge_lookup:
                     edge_lookup[index] = set()
                 edge_lookup[index].add(edge)
