@@ -1703,16 +1703,17 @@ class Polyhedron:
         output.append(remainder)
         return output
     def find_exterior_circuit(circuits):
-        for i,x in enumerate(circuits):
+        circuits_list = list(circuits)
+        for i,x in enumerate(circuits_list):
             triangulation = Polyhedron.triangulate(x)
-            for j,y in enumerate(circuits):
+            for j,y in enumerate(circuits_list):
                 if j != i:
-                    doublebreak = False
+                    double_break = False
                     for point in y:
                         if not any(Polyhedron.inside_triangle(z,point) for z in triangulation):
-                            doublebreak = True
+                            double_break = True
                             break
-                    if doublebreak:
+                    if double_break:
                         break
             else:
                 return x
@@ -1752,12 +1753,13 @@ class Polyhedron:
         output.append(exterior)
         while len(output) > 1:
             interior = output[0]
-            for i in range(len(interior)):
+            for x in interior:
                 double_break = False
-                for j in range(len(output[-1])):
-                    segment = (interior[i],output[-1][j])
+                for y in output[-1]:
+                    segment = (x,y)
                     if not len(Polyhedron.circuit_intersect(segment, output[:-1])):
                         double_break = True
+                        break
                 if double_break:
                     break
             intersections = Polyhedron.circuit_intersect(segment, output)
