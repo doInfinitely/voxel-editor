@@ -724,7 +724,7 @@ class Box:
                         for i in range(20):
                             if vec[0]/2**i == 0 and vec[1]/2**i == 0 and vec[2]/2**i == 0:
                                 break
-                            p3 = tuple(p1[i]+vec[i]/2**i for i in range(3))
+                            p3 = tuple(p1[j]+vec[j]/2**i for j in range(3))
                             if self.x_min <= p3[0] and p3[0] <= self.x_max and self.y_min <= p3[1] and p3[1] <= self.y_max and self.z_min <= p3[2] and p3[2] <= self.z_max:
                                 triple_break = True
                                 break
@@ -1797,7 +1797,6 @@ class Polyhedron:
         output = []
         for face_index,face in enumerate(self.faces):
             circuit = Polyhedron.circuit_cut(self.circuits(face_index))
-            min_distance, mini = float("inf"), None
             for triangle in Polyhedron.triangulate(circuit):
                 triangle = list(triangle)
                 alpha, beta, gamma = symbols("alpha beta gamma")
@@ -1814,11 +1813,11 @@ class Polyhedron:
                     alpha, beta, gamma = solutions[0][alpha], solutions[0][beta], solutions[0][gamma]
                 #(beta*(alpha*triangle[0][i]+(1-alpha)*triangle[1][i])+(1-beta)*triangle[2][i]-position[i]+direction[i]*gamma)**2
                     if alpha >= 0 and alpha <= 1 and beta >= 0 and beta <= 1 and gamma > 0:
-                        point = tuple(alpha*triangle[0][i]+(1-alpha)*triangle[1][i] for i in range(3))
-                        point = tuple(beta*x+(1-beta)*triangle[2][i] for i,x in enumerate(point))
-                        if Polyhedron.inside_triangle(triangle,point):
-                            output.append((gamma, point, face_index))
-                        break
+                        p = tuple(alpha*triangle[0][i]+(1-alpha)*triangle[1][i] for i in range(3))
+                        p = tuple(beta*x+(1-beta)*triangle[2][i] for i,x in enumerate(p))
+                        if Polyhedron.inside_triangle(triangle,p):
+                            output.append((gamma, p, face_index))
+                            break
         #print('is_inside', output)
         return len(output)%2==1
     def round_verts(self, round_point):

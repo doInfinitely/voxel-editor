@@ -85,7 +85,7 @@ class Polyhedron {
                 edge_lookup[index].insert(edge);
             }
         }
-        set<int> difference = (edges[current].begin(), edges[current].end(), edges[previous].begin(), edges[previous].end(), std::inserter(difference, difference.begin()));
+        set<int> difference = set_difference(edges[current].begin(), edges[current].end(), edges[previous].begin(), edges[previous].end(), std::inserter(difference, difference.begin()));
         int point = *(difference.begin());
         if (find(path.begin(), path.end(), verts[point]) != path.end()) {
             return output;
@@ -115,7 +115,7 @@ class Polyhedron {
             for (int j = i+1; j < output_list.size(); j++) {
                 set<std::array<double,3>> set_i(output_list[i].begin(),output_list[i].end());
                 set<std::array<double,3>> set_j(output_list[j].begin(),output_list[j].end());
-                set<std::array<double,3>> difference = (set_i.begin(), set_i.end(), set_j.begin(), set_j.end(), std::inserter(difference, difference.begin()));
+                set<std::array<double,3>> difference = set_difference(set_i.begin(), set_i.end(), set_j.begin(), set_j.end(), std::inserter(difference, difference.begin()));
                 if (output_list[i] != output_list[j] && !difference.size()) {
                     vector<std::array<double,3>> y_r(output_list[j].begin(),output_list[j].end());
                     std::reverse(y_r.begin(),y_r.end());
@@ -181,7 +181,7 @@ class Polyhedron {
             for (int j = i+1; j < output_list.size(); j++) {
                 set<std::array<double,3>> set_i(output_list[i].begin(),output_list[i].end());
                 set<std::array<double,3>> set_j(output_list[j].begin(),output_list[j].end());
-                set<std::array<double,3>> difference = (set_i.begin(), set_i.end(), set_j.begin(), set_j.end(), std::inserter(difference, difference.begin()));
+                set<std::array<double,3>> difference = set_difference(set_i.begin(), set_i.end(), set_j.begin(), set_j.end(), std::inserter(difference, difference.begin()));
                 if (output_list[i] != output_list[j] && !difference.size()) {
                     vector<std::array<double,3>> y_r(output_list[j].begin(),output_list[j].end());
                     std::reverse(y_r.begin(),y_r.end());
@@ -474,6 +474,67 @@ class Polyhedron {
         output_pointer->insert(output[0].begin(),output[0].end());
         return output_pointer;
     }
+    struct IsInsideIntersection {
+        double gamma;
+        std::array<double,3> point;
+        int face_index;
+    }
+    bool is_inside(std::array<double,3> point) {
+        for (int face_index = 0; face_index < faces.size(); face_index++) {
+            for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*Polyhedron::circuit_cut(this.circuits(face_index)))) {
+                if (Polyhedron::inside_triangle(triangle, point)) {
+                    return true;
+                }
+            }
+        }
+        std::array<double,3> vec = {(double)(rand()/RAND_MAX),(double)(rand()/RAND_MAX),(double)(rand()/RAND_MAX)};
+        vector<Polyhedron::IsInsideIntersection> output;
+        for (int face_index = 0; face_index < faces.size(); face_index++) {
+            vector<std::array<double,3>> circuit = *Polyhedron::circuit_cut(this.circuits(face_index));
+            for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(circuit)) {
+                MatrixXd m(4,4);
+                VectorXd b(4);
+                for (int i = 0; i < 3; i++) {
+                    m(i,0) = triangle[0][i];
+                    m(i,1) = triangle[1][i];
+                    m(i,2) = triangle[2][i];
+                    m(i,3) = -vec[i]
+                    b(i) = point[i] 
+                }
+                for (int i = 0; i < 3; i++) {
+                    m(3,i) = 1;
+                }
+                m(3,3) = 0;
+                b(3) = 1;
+                VectorXd x = m.colPivHouseholderQr().solve(b);
+                VectorXd b_prime = m*x;
+                bool error = false;
+                for (int i = 0; i < 4; i++) {
+                    if ( abs(b_prime(i)-b(i)) > 0.1*abs(b(i)) ) {
+                        error = true;
+                    }
+                }
+                if (error) {
+                    continue
+                }
+                if (x(0) >= 0 && x(1) >= 0 && x(2) >= 0 && x(3) > 0) {
+                    std::array<double,3> p;
+                    for (int i = 0; i < 3; i++) {
+                        p[i] = x(0)*triangle[0][i]+x(1)*triangle[1][i]+x(2)*triangle[2][i];
+                    }
+                    if (Polyhedron::inside_triangle(triangle,p)) {
+                        Polyhedron::IsInsideIntersection intersection;
+                        intersection.gamma = x(3);
+                        intersection.point = p;
+                        intersection.face_index = face_index;
+                        output.push_back(intersection);
+                        break;
+                    }
+                }
+            }
+        }
+        return output.size() % 2 == 1;
+    }
 };
 
 class Camera {
@@ -731,5 +792,140 @@ class Box {
             }
         }
         return intersections % 2 == 1;
-    } 
+    }
+    Polyhedron del(Polyhedron poly) {
+        std::array<double,2> x_min_max = {x_min, x_max};
+        std::array<double,2> y_min_max = {y_min, y_max};
+        std::array<double,2> z_min_max = {z_min, z_max};
+        vector<set<std::array<double,3>>> box_faces;
+        for (const double& x : x_min_max) {
+            set<std::array<double,3>> box_face;
+            for (const double& y : y_min_max) {
+                for (const double& z : z_min_max) {
+                    box_face.insert({x,y,z});
+                }
+            }
+            box_faces.push_back(box_face);
+        }
+        for (const double& y : y_min_max) {
+            set<std::array<double,3>> box_face;
+            for (const double& x : x_min_max) {
+                for (const double& z : z_min_max) {
+                    box_face.insert({x,y,z});
+                }
+            }
+            box_faces.push_back(box_face);
+        }
+        for (const double& z : z_min_max) {
+            set<std::array<double,3>> box_face;
+            for (const double& x : x_min_max) {
+                for (const double& y : y_min_max) {
+                    box_face.insert({x,y,z});
+                }
+            }
+            box_faces.push_back(box_face);
+        }
+        std::array<double,3> center = {(x_min+x_max)/2,(y_min+y_max)/2,(z_min+z_max)/2};
+        if (!Box::inside_polyhedron(poly, center)) {
+            bool triple_break = false;
+            for (const set<int>& edge : poly.edges) {
+                set<std::array<double,3>> edge_grounded;
+                for (const int& index : edge) {
+                    edge_grounded.insert(poly.verts[index]);
+                }
+                if (this.intersect(edge_grounded)) {
+                    bool any1 = false;
+                    for (const double& x1 : x_min_max) {
+                        for (const double& y1 : y_min_max) {
+                            for (const double& z1 : z_min_max) {
+                                for (const double& x2 : x_min_max) {
+                                    for (const double& y2 : y_min_max) {
+                                        for (const double& z2 : z_min_max) {
+                                            if ((int)(x1 != x2)+(int)(y1 != y2)+(int)(z1 != z2) == 1) {
+                                                bool all = true;
+                                                for (const std::array<double,3>& point : edge_grounded) {
+                                                    set<std::array<double,3>> temp_set = {{x1,y1,z1},{x2,y2,z2},point};
+                                                    if (!Box::colinear(temp_set)) {
+                                                        all = false;                    
+                                                        break;
+                                                    }
+                                                }
+                                                if(all) {
+                                                    any1 = true;
+                                                }
+                                            }
+                                            if (all) {
+                                                break;
+                                            }
+                                        }
+                                        if (all) {
+                                            break;
+                                        }
+                                    }
+                                    if (all) {
+                                        break;
+                                    }
+                                }
+                                if (all) {
+                                    break;
+                                }
+                            }
+                            if (all) {
+                                break;
+                            }
+                        }
+                        if (all) {
+                            break;
+                        }
+                    }
+                    if (!any1) {
+                        bool any2 = false;
+                        for (const set<std::array<double,3>>& box_face : box_faces) {
+                            set<std::array<double,3>> temp_set(edge_grounded.begin(),edge_grounded.end());
+                            temp_set.insert(box_face.begin(),box_face.end());
+                            if (Box::coplanar(temp_set)) {
+                                any2 = true;
+                                break;
+                            }
+                        }
+                        if (!any2) {
+                            for (const std::array<double,3>& p1 : edge_grounded) {
+                                if (x_min <= p1[0] && p1[0] <= x_max && y_min <= p1[1] && p1[1] <= y_max && z_min <= p1[2] && p1[2] <= z_max) {
+                                    set<std::array<double,3>> difference(edge_grounded.begin(),edge_grounded.end());
+                                    difference.erase(p1);
+                                    std::array<double,3> p2 = *(difference.begin());
+                                    std::array<double,3> vec;
+                                    for (int i = 0; i < 3; i++) {
+                                        vec[i] = p2[i]-p1[i];
+                                    }
+                                    for (int i = 0; i < 20; i++) {
+                                        if (vec[0]/pow(2,i) == 0 && vec[1]/pow(2,i) == 0 && vec[2]/pow(2,i) == 0) {
+                                            break;
+                                        }
+                                        std::array<double,3> p3;
+                                        for (int j = 0; j < 3; j++) {
+                                            p3[j] = p1[j]+vec[j]/pow(2,i); 
+                                        }
+                                        if (x_min <= p3[0] && p3[0] <= x_max && y_min <= p3[1] && p3[1] <= y_max && z_min <= p3[2] && p3[2] <= z_max) {
+                                            triple_break = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (triple_break) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (triple_break) {
+                        break;
+                    }    
+                }
+            }
+            if (!triple_break) {
+                return poly;
+            }
+        }
+    }
 };
