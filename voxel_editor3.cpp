@@ -56,6 +56,10 @@ class Polyhedron {
         }
         return output;
     }
+    static double distance(std::array<double,3> point1, std::array<double,3> point2) {
+        std::array<double,3>displacement = {point2[0]-point1[0],point2[1]-point1[1],point2[2]-point1[2]};
+        return sqrt(Polyhedron::dot(displacement, displacement));
+    }
     static std::array<double,3> cross3D(std::array<double,3> vector1, std::array<double,3> vector2) {
         std::array<double,3> output;
         for (int i = 0; i < 3; i++) {
@@ -825,6 +829,16 @@ class Box {
             }
             box_faces.push_back(box_face);
         }
+        class PointDistanceComparator {
+          public:
+            std::array<double,3> point = {0,0,0};
+            PointDistanceComparator(std::array<double,3> point) {
+                this.point = point;
+            }
+            bool operator()(std::array<double,3> a, std::array<double,3> b) const {
+                return a + b;
+            }
+        };
         std::array<double,3> center = {(x_min+x_max)/2,(y_min+y_max)/2,(z_min+z_max)/2};
         if (!Box::inside_polyhedron(poly, center)) {
             bool triple_break = false;
@@ -984,12 +998,89 @@ class Box {
             if (box_map[i] == -1) {
                 set<set<std::array<double,3>>> new_face;
                 for (int j = 0; j < box.size(); j++) {
-                    new_face.insert
+                    new_face.insert(Polyhedron::round_edge({box[(j-1)%box.size()],box[j]}));
                 }
-                faces.push_back()
+                faces.push_back(new_face);
             }
             else if (box_map[i] != -2) {
-                
+                bool any1 = false;
+                for (const std::array<double,3>& y : box) {
+                    bool any2 = false;
+                    for (std::array<std::array<double,3>,3> triangle : Polyhedron::triangulate(*Polyhedron::find_exterior_circuit(poly.circuits(box_map[i])))) {
+                        for (const std::array<double,3>& x : box) {
+                            if (Polyhedron::inside_triangle(triangle,x)) {
+                                any2 = true;
+                                break;
+                            }
+                        }
+                        if (any2) {
+                            break;
+                        }
+                    }
+                    if (!any2) {
+                        any1 = true;
+                        break; 
+                    }
+                }
+                if (any1) {
+                    all = true;
+                    for (const std::array<double,3>& y : box) {
+                        any1 = false;
+                        if (!Polyhedron::inside_polyhedron(poly,y)) {
+                            all = false;
+                            break;
+                        }
+                        for (int face_index = 0; face_index < poly.faces.size(); face_index++) {
+                            for (std::array<std::array<double,3>,3> triangle : Polyhedron::triangulate(*Polyhedron::circuit_cut(poly.circuits(face_index)))) {
+                                if (Polyhedron::inside_triangle(triangle,y)) {
+                                    any1 = true;
+                                    break;
+                                }
+                            }
+                            if (any1) {
+                                break;
+                            }
+                        }
+                        if (any1) {
+                            all = false;
+                            break;
+                        }
+                    }
+                    if (all) {
+                        for (int j = 0; j < box.size(); j++) {
+                            set<std::array<double,3>> edge1 = {box[(j-1)%box.size()],box[j]};
+                            if (find(old_face_indices.begin(), old_face_indicies.end(), box_map[i]) != old_face_indices.end()) {
+                                bool no_break = true;
+                                for (const set<std::array<double,3>>& edge2 : faces[box_map[i]]) {
+                                    if (Box::point_on_segment(edge2,box[(j-1)%box.size()]) && Box::point_on_segment(edge2, box[j])) {
+                                        faces[box_map[i]].erase(edge2);
+                                        set<std::array<double,3>>::iterator it = edge2.begin()
+                                        std::array<double,3> p1 = *(it);
+                                        std::array<double,3> p2 = *(++it);
+                                        Box::PointDistanceComparator comp = Box::PointDistanceComparator(p1);
+                                        std::array<<std::array<double,3>,2> edge1_array = {box[(j-1)%box.size()],box[j]};
+                                        sort(edge1_array.begin(),edge1_array.end(), comp);
+                                        if (Polyhedron::distance(p1,edge1_array[0]) > 0) {
+                                            set<std::array<double,3>> edge3 = {p1, edge1_array[0]};
+                                            faces[box_map[i]].insert(edge3);
+                                        }
+                                        comp = Box::PointDistanceComparator(p2);
+                                        sort(edge1_array.begin(),edge1_array.end(), comp);
+                                        if (Polyhedron::distance(p2,edge1_array[0]) > 0) {
+                                            set<std::array<double,3>> edge3 = {p2, edge1_array[0]};
+                                            faces[box_map[i]].insert(edge3);
+                                        }
+                                        no_break = false;
+                                        break;
+                                    }
+                                }
+                                if (no_break) {
+                                    faces[box_map[i]].insert(edge1);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
