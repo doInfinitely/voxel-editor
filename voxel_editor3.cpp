@@ -97,10 +97,10 @@ class Polyhedron {
         for (const set<int>& y : temp) {
             set<std::array<double,3>> union_set;
             for (const std::array<double,3>& x : path) {
-                union_set.insert(round_point(x));
+                union_set.insert(Polyhedron::round_point(x));
             }
             for (const int& x : y) {
-                union_set.insert(round_point(verts[x]));
+                union_set.insert(Polyhedron::round_point(verts[x]));
             }
             if (Box::coplanar(union_set)) {
                 vector<set<int>>::iterator it = find(edges.begin(),edges.end(),y);
@@ -925,6 +925,71 @@ class Box {
             }
             if (!triple_break) {
                 return poly;
+            }
+        }
+        vector<set<set<std::array<double,3>>>> faces;
+        set<set<std::array<double,3>>> path_edges;
+        std::array<int,6> box_map = {-1,-1,-1,-1,-1,-1};
+        for (int i = 0; i < poly.faces.size(); i++) {
+            DelPreprocessOutput output = this.del_preprocess(poly, i);
+            faces.push_back(output.new_edges);
+            path_edges.insert(output.path_edges.begin(),output.path_edges.end());
+            if (output.box_index > -1) {
+                box_map[output.box_index] = i;
+            }
+        }
+        vector<int> old_face_indices;
+        for (int i = 0; i < faces.size(); i++) {
+            if (faces[i].size()) {
+                old_face_indices.push_back(i)
+            }
+        }
+        vector<set<int>> old_faces;
+        for (const int& face_index : old_face_indices) {
+            old_faces.push_back(poly.faces[face_index]);
+        }
+        bool all = true;
+        for (const int& index : box_map) {
+            if (index > -1) {
+                all = false;
+            }
+        }
+        if (all) {
+            for (int i = 0; i < 6; i++) {
+                box_map[i] = -2;
+            }
+        }
+        for (int i = 0; i < 6; i++) {
+            std::array<std::array<double,3>,4> box;
+            switch (i) {
+                case 0:
+                    box = {{x_min, y_min, z_min},{x_min, y_max, z_min},{x_min, y_max, z_max},{x_min, y_min, z_max}};
+                    break;
+                case 1:
+                    box = {{x_max, y_min, z_min},{x_max, y_max, z_min},{x_max, y_max, z_max},{x_max, y_min, z_max}};
+                    break;
+                case 2:
+                    box = {{x_min, y_min, z_min},{x_max, y_min, z_min},{x_max, y_min, z_max},{x_min, y_min, z_max}};
+                    break;
+                case 3:
+                    box = {{x_min, y_max, z_min},{x_max, y_max, z_min},{x_max, y_max, z_max},{x_min, y_max, z_max}};
+                    break;
+                case 4:
+                    box = {{x_min, y_min, z_min},{x_max, y_min, z_min},{x_max, y_max, z_min},{x_min, y_max, z_min}}
+                    break;
+                case 5:
+                    box = {{x_min, y_min, z_max},{x_max, y_min, z_max},{x_max, y_max, z_max},{x_min, y_max, z_max}}
+                    break;
+            }
+            if (box_map[i] == -1) {
+                set<set<std::array<double,3>>> new_face;
+                for (int j = 0; j < box.size(); j++) {
+                    new_face.insert
+                }
+                faces.push_back()
+            }
+            else if (box_map[i] != -2) {
+                
             }
         }
     }

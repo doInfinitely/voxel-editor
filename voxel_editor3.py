@@ -751,8 +751,8 @@ class Box:
         for x in temp:
             path_edges |= x
         print('preprocessing time', time.time()-start_time)
-        old_faces = [face for face_index,face in enumerate(poly.faces) if len(faces[face_index])]
-        old_face_indices = [poly.faces.index(x) for x in old_faces]
+        old_face_indices = [face_index for face_index,face in enumerate(poly.faces) if len(faces[face_index])]
+        old_faces = [poly.faces[face_index] for face_index in old_face_indices]
         faces = [face for face in faces if len(face)]
         if all(x is None for x in box_map):
             box_map = [False for i in range(6)]
