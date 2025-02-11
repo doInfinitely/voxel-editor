@@ -14,6 +14,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace Polyhedron;
 
 class Polyhedron {
   public:
@@ -49,6 +50,45 @@ class Polyhedron {
         }
         return output;
     }
+    static double round_float(double x) {
+        return round(x*1000)/1000;
+    static std::array<double,3> round_point(std::array<double,3> point) {
+        return {round_float(point[0]), round_float(point[1]), round_float(point[2])};
+    }
+    static set<std::array<double,3>> round_edge(set<std::array<double,3>> edge) {
+        set<std::array<double,3>> output;
+        set<std::array<double,3>>::iterator it = edge.begin();
+        output.insert(round_point(*(it)));
+        it++;
+        output.insert(round_point(*(it)));
+        return output;
+    }
+    static double round_float_meter(double x, set<double> meters) {
+        if (!meters.size()) {
+            meters = {1};
+        }
+        double minidiff = std::numeric_limits<double>::infinity();
+        double mini = 0;
+        for (const double& y : meters) {
+            double diff = abs(x/y - round(x/y));
+            if (diff < minidiff) {
+                minidiff = diff;
+                mini = round(x/y)*y;
+            }
+        }
+        return mini;
+    }
+    static std::array<double,3> round_point_meter(std::array<double,3> x, set<double> meters) {
+        return {round_float_meter(x[0], meters),round_float_meter(x[1], meters),round_float_meter(x[2], meters)};
+    }
+    static set<std::array<double,3>> round_edge_meter(set<std::array<double,3>> edge, set<double> meters) {
+        set<std::array<double,3>> output;
+        set<std::array<double,3>>::iterator it = edge.begin();
+        output.insert(round_point_meter(*(it), meters));
+        it++;
+        output.insert(round_point_meter(*(it), meters));
+        return output;
+    } 
     static double dot(std::array<double,3> vector1, std::array<double,3> vector2) {
         double output = 0;
         for (int i = 0; i < vector1.size(); i++) {
@@ -133,7 +173,7 @@ class Polyhedron {
                     vector<std::array<double,3>> y_r_rearranged(y_r.begin()+index_x0_in_y_r,y_r.end());
                     y_r_rearranged.insert(y_r.begin(),y_r.begin()+index_x0_in_y_r);
                     vector<std::array<double,3>> y_r_rearranged_sliced(y_r_rearranged.begin(),y_r_rearranged.begin()+output_list[i].size());
-                    if (y_rearranged_sliced == output_list[i] || y_r_rearranged == output_list[i]) {
+                    if (y_rearranged_sliced == output_list[i] || y_r_rearranged_sliced == output_list[i]) {
                         if (output.find(output_list[j]) != output.end()) {
                             output.erase(output_list[j])
                         }
@@ -298,7 +338,7 @@ class Polyhedron {
                         EarClip ear_clip;
                         ear_clip.ear = triangle;
                         for (int k = 0; k < circuit.size(); k++) {
-                            if (k != i) {
+                            if (k != i && circuit[k] && circuit[k] != circuit[(k-1)%circuit.size()]) {
                                 ear_clip.remainder.push_back(circuit[k]);
                             }
                         }
@@ -700,7 +740,7 @@ class Box {
         }
         return false;
     }
-    static std::array<double,3>* intersect_segmeents(set<std::array<double,3>> edge1, set<std::array<double,3>> edge2) {
+    static std::array<double,3>* intersect_segments(set<std::array<double,3>> edge1, set<std::array<double,3>> edge2) {
         set<std::array<double,3>>::iterator it = edge1.begin();
         std::array<double,3> p1 = *(it);
         it++;
@@ -797,6 +837,645 @@ class Box {
         }
         return intersections % 2 == 1;
     }
+    static set<vector<std::array<double,3>>> del_circuit_helper(set<set<std::array<double,3>>>path_edges, set<std::array<double,3>> start, set<std::array<double,3>> previous, set<std::array<double,3>> current, vector<std::array<double,3>> path, set<set<std::array<double,3>>>& seen) {
+        map<std::array<double,3>,set<set<std::array<double,3>>>> edge_lookup;
+        for (const set<std::array<double,3>>& edge : path_edges) {
+            for (const std::array<double,3>& point : edge) {
+                edge_lookup[round_point(point)].insert(edge);
+            }
+        }
+        set<vector<std::array<double,3>>> output;
+        if (current == start) {
+            output.insert(path);
+            return output;
+        }
+        if (seen.find(current) != seen.end()) {
+            return output;
+        }
+        seen.insert(current);
+        set<std::array<double,3>> difference;
+        set_difference(current.begin(),current.end(),previous.begin(),previous.end(),inserter(difference,difference.begin()));
+        std::array<double,3> point = *(difference.begin());
+        if (find(path.begin(), path.end(), point) != path.end()) {
+            return output;
+        }
+        path.push_back(point);
+        previous = current;
+        set<set<std::array<double,3>>> temp(edge_lookup[round_point(point)].begin(),edge_lookup[round_point(point)].end());
+        temp.erase(previous);
+        for (const set<std::array<double,3>>& x : temp) {
+            set<std::array<double,3>> point_union;
+            for (const std::array<double,3>& y : path) {
+                point_union.insert(round_point(y));
+            }
+            set<std::array<double,3>> edge = round_edge(x);
+            point_union.insert(edge.begin(),edge.end());
+            if (Box::coplanar(point_union)) {
+                current = x;
+                set<vector<std::array<double,3>>> intermediate = Box::del_circuit_helper(path_edges, start, previous, current, path, seen);
+                output.insert(intermediate.begin(), intermediate.end());
+            }
+        }
+        vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
+        for (int i = 0; i < output_list.size(); i++) {
+            for (int j = 0; j < output_list.size(); j++) {
+                set<std::array<double,3>> difference2;
+                set_difference(output_list[i].begin(),output_list[i].end(),output_list[j].begin(),output_list[j].end(),inserter(difference2,difference2.begin()));
+                if (j > i && output_list[i].size() == output_list[j].size() && !(difference2.size()) && output.find(output_list[j]) != output.end()) {
+                    output.erase(output_list[j]);
+                }
+            }
+        }
+        return output;
+    }
+    static set<vector<std::array<double,3>>> del_circuit_helper(set<set<std::array<double,3>>>path_edges) {
+        map<std::array<double,3>,set<set<std::array<double,3>>>> edge_lookup;
+        for (const set<std::array<double,3>>& edge : path_edges) {
+            for (const std::array<double,3>& point : edge) {
+                edge_lookup[round_point(point)].insert(edge);
+            }
+        }
+        set<set<std::array<double,3>>> seen;
+        set<vector<std::array<double,3>>> output;
+        for (const set<std::array<double,3>>& edge : path_edges) {
+            vector<std::array<double,3>> path;
+            set<std::array<double,3>> start = edge;
+            std::array<double,3> point = *(start.begin())
+            path.push_back(point);
+            set<set<std::array<double,3>>> temp(edge_lookup[round_point(point)].begin(),edge_lookup[round_point(point)].end());
+            temp.erase(start);
+            for (const set<std::array<double,3>>& x : temp) {
+                set<std::array<double,3>> current = x;
+                set<vector<std::array<double,3>>> intermediate = Box::del_circuit_helper(path_edges, start, previous, current, path, seen);
+                circuits.insert(intermediate.begin(),intermediate.end());
+            }
+        }
+        vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
+        for (int i = 0; i < output_list.size(); i++) {
+            for (int j = 0; j < output_list.size(); j++) {
+                set<std::array<double,3>> difference2;
+                set_difference(output_list[i].begin(),output_list[i].end(),output_list[j].begin(),output_list[j].end(),inserter(difference2,difference2.begin()));
+                if (j > i && output_list[i].size() == output_list[j].size() && !(difference2.size()) && output.find(output_list[j]) != output.end()) {
+                    output.erasse(output_list[j]);
+                }
+            }
+        }
+        return output;
+    }
+    class PointDistanceComparator {
+      public:
+        std::array<double,3> point = {0,0,0};
+        PointDistanceComparator(std::array<double,3> point) {
+            this.point = point;
+        }
+        bool operator()(std::array<double,3> a, std::array<double,3> b) const {
+            return a + b;
+        }
+    };
+    struct DelPreprocessOutput {
+        set<set<std::array<double,3>>> new_edges;
+        set<set<std::array<double,3>>> path_edges;
+        int box_index;
+    }
+    DelPreprocessOutput del_preprocess(Polyhedron poly, int face_index) {
+        set<int> face = poly.faces[face_index];
+        vector<std::array<double,3>> circuit = Polyhedron::circuit_cut(poly.circuits(face_index));
+        DelPreprocessOutput output;
+        vector<std::array<double,3>> box;
+        output.box_index = -1;
+        if (circuit[0][0] == circuit[1][0] && circuit[0][0] == circuit[2][0] && circuit[0][0] >= x_min && circuit[0][0] <= x_max) {
+            box = {{circuit[0][0],y_min,z_min},{circuit[0][0],y_max,z_min},{circuit[0][0],y_max,z_max},{circuit[0][0],y_min,z_max}};
+        } else if (circuit[0][1] == circuit[1][1] && circuit[0][1] == circuit[2][1] && circuit[0][1] >= y_min && circuit[0][1] <= y_max) {
+            box = {{x_min,circuit[0][1],z_min},{x_max,circuit[0][1],z_min},{x_max,circuit[0][1],z_max},{x_min,circuit[0][1],z_max}};
+        } else if (circuit[0][2] == circuit[1][2] && circuit[0][2] == circuit[2][2] && circuit[0][2] >= z_min && circuit[0][2] <= z_max) {
+            box = {{x_min,y_min,circuit[0][2]},{x_max,y_min,circuit[0][2]},{x_max,y_max,circuit[0][2]},{x_min,y_max,circuit[0][2]}};
+        }
+        bool all = true;
+        for (int i = 0; i < circuit.size(); i++) {
+            if (circuit[i][0] < x_min || circuit[i][0] > x_max || circuit[i][1] < y_min || circuit[i][1] > y_max || circuit[i][2] < z_min || circuit[i][2] > z_max) {
+                all = false;
+                break
+            }
+        }
+        if (all) {
+            bool double_break = false;
+            vector<set<std::array<double,3>>> edges_grounded;
+            for (const set<int>& edge : poly.edges) {
+                set<std::array<double,3>> edge_grounded;
+                for (const int& index : edge) {
+                    edge_grounded.insert(poly.verts[index]);
+                }
+                edges_grounded.push_back(edge_grounded);
+            }
+            for (const std::array<double,3>& p1 : circuit) {
+                if (find(poly.verts.begin(), poly.verts.end(), p1) != poly.verts.end()) {
+                    for (const set<std::array<double,3>>& edge : edges_grounded) {
+                        int intersection = 0;
+                        std::array<double,3> p2;
+                        if (edge.find(p1) != edge.end()) {
+                            edge.erase(p1);
+                            p2 = *(edge.begin())
+                        }
+                        if (find(circuit.begin(), circuit.end(), p2) == circuit.end()) {
+                            int dim;
+                            for (int i = 0; i < 3; i++) {
+                                if (p1[i]!=p2[]) {
+                                    dim = i;
+                                    break;
+                                }
+                            }
+                            std::array<double,3> vec = {p2[0]-p1[0],p2[1]-p1[1],p2[2]-p1[2]};
+                            std::array<double,2> min_max;
+                            switch (dim) {
+                                case 0:
+                                    min_max = {x_min, x_max};
+                                    break;
+                                case 1:
+                                    min_max = {y_min, y_max};
+                                    break;
+                                case 2:
+                                    min_max = {z_min, z_max};
+                                    break;
+                            }
+                            for (const double& w : min_max) {
+                                std::array<std::array<std::array<double,3>,3>,2> triangles;
+                                switch (dim) {
+                                    case 0:
+                                        triangles = {{{w,y_min,z_min},{w,y_max,z_min},{w,y_max,z_max}},{{w,y_min,z_min},{w,y_min,z_max},{w,y_max,z_max}}}
+                                        break;
+                                    case 1:
+                                        triangles = {{{x_min,w,z_min},{x_max,w,z_min},{x_max,w,z_max}},{{x_min,w,z_min},{x_min,w,z_max},{x_max,w,z_max}}};
+                                        break;
+                                    case 2:
+                                        triangles = {{{x_min,y_min,w},{x_max,y_min,w},{X_max,y_max,w}},{{x_min,y_min,w},{x_min,y_max,w},{x_max,y_max,w}}};
+                                        break;
+                                }
+                                if ((vec[dim] > 0 && w > p1[dim]) || (vec[dim] < 0 && w < p1[dim])) {
+                                    std::array<double,3> projection = {p1[0],p1[2],p1[3]};
+                                    projection[dim] = w;
+                                    for (const std::array<std::array<double,3>,3>& triangle : triangles) {
+                                        if (Polyhedron::inside_triangle(triangle,projection)) {
+                                            intersection++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (intersection % 2 == 0) {
+                            double_break = true;
+                            break;
+                        }
+                    }
+                    if (double_break) {
+                        break;
+                    }
+                }
+            }
+            if (!double_break) {
+                return output; 
+            }
+        }
+        vector<std::array<double,3>> intersections;
+        vector<bool*> intersections_inside;
+        for (int i = 0; i < circuit.size(); i++) {
+            bool any = false;
+            for (const vector<std::array<double,3>>& y : poly.circuits(face_index)) {
+                if (find(y.begin(),y.end(),circuit[(i-1)%circuit.size()]) != y.end() && find(y.begin(),y.end(),circuit[i]) != y.end()) {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any) {
+                continue;
+            }
+            std::array<double,3> p1 = circuit[(i-1)%circuit.size()];
+            std::array<double,3> p2 = circuit[i];
+            vector<std::array<double,3>> last_intersections;
+            for (int j = 0; j < box.size(); j++) {
+                if (!Box::colinear({p1,p2,box[(j-1)%box.size()],box[j]})) {
+                    std::array<double,3> intersection = Box::intersect_segments({p1, p2}, {box[(j-1)%box.size()], box[j]});
+                    if (intersection != NULL) {
+                        last_intersections.push_back(*intersection);
+                    }
+                } else {
+                    if (Box::point_on_segment({box[(j-1)%box.size()], box[j]}, p1) && Box::point_on_segment({box[(j-1)%box.size()], box[j]}, p2)) {
+                        if (find(box.begin(),box.end(),p1) == box.end()) {
+                            last_intersections.push_back(p1);
+                        }
+                        if (find(box.begin(),box.end(),p2) == box.end()) {
+                            last_intersections.push_back(p2);
+                        }
+                    }
+                }
+            }
+            switch (last_intersections.size()) {
+                case 0:
+                    output.new_edges.insert({p1,p2});
+                    break;
+                case 1:
+                    if (x_min > p2[0] || p2[0] > x_max || y_min > p2[1] || p2[1] > y_max || z_min > p2[2] || p2[2] > z_max) {
+                        set<std::array<double,3>> edge = {p2,last_intersections[0]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        }
+                        vector<std::array<double,3>>::iterator it = find(intersections.begin(),intersections.end(), last_intersections[0]);
+                        if (it != intersections.end()) {
+                            int index = std::distance(intersections.begin(),it);
+                            delete intersections_inside[index];
+                            intersections_inside[index] = new bool(false);
+                        } else {
+                            intersections.push_back(last_intersections[0]);
+                            intersections_inside.push_back(new bool(false));
+                        }
+                    } else if (x_min > p1[0] || p1[0] > x_max || y_min > p1[1] || p1[1] > y_max || z_min > p1[2] || p1[2] > z_max) {
+                        set<std::array<double,3>> edge = {p1,last_intersections[0]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        }
+                        vector<std::array<double,3>>::iterator it = find(intersections.begin(),intersections.end(), last_intersections[0]);
+                        if (it != intersections.end()) {
+                            int index = std::distance(intersections.begin(),it);
+                            if (intersections_inside[index] == NULL) {
+                                delete intersections_inside[index];
+                                intersections_inside[index] = new bool(true);
+                            }
+                        } else {
+                            intersections.push_back(last_intersections[0]);
+                            intersections_inside.push_back(new bool(true));
+                        }
+                    }
+                    break;
+                case 2:
+                    std::array<bool*,2> last_intersections_inside;
+                    PointDistanceComparator comp(p1);
+                    sort(last_intersections.begin(),last_intersections.end(),comp);
+                    if ((x_min > p1[0] || p1[0] > x_max || y_min > p1[1] || p1[1] > y_max || z_min > p1[2] || p1[2] > z_max) && (x_min > p2[0] || p2[0] > x_max || y_min > p2[1] || p2[1] > y_max || z_min > p2[2] || p2[2] > z_max)) {
+                        last_intersections_inside[1] = new bool(false);
+                        last_intersections_inside[0] = new bool(true);
+                        set<std::array<double,3>> edge = {p1,last_intersections[0]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        }
+                        edge = {p2,last_intersections[1]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        }
+                    } else if (x_min > p1[0] || p1[0] > x_max || y_min > p1[1] || p1[1] > y_max || z_min > p1[2] || p1[2] > z_max) {
+                        last_intersections_inside[1] = NULL;
+                        last_intersections_inside[0] = new bool(true);
+                        set<std::array<double,3>> edge = {p1,last_intersections[0]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        }
+                    } else if (x_min > p2[0] || p2[0] > x_max || y_min > p2[1] || p2[1] > y_max || z_min > p2[2] || p2[2] > z_max) {
+                        last_intersections_inside[1] = new bool(false);
+                        last_intersections_inside[0] = NULL;
+                        set<std::array<double,3>> edge = {p2,last_intersections[1]};
+                        if (edge.size() == 2) {
+                            output.new_edges.insert(edge);
+                        } 
+                    } else {
+                        last_intersections_inside[1] = NULL;
+                        last_intersections_inside[0] = NULL;
+                    }
+                    for (int j = 0; j < last_intersections.size(); j++) {
+                        vector<std::array<double,3>>::iterator it = find(intersections.begin(),intersections.end(), last_intersections[j]);
+                        if (it != intersections.end()) {
+                            int index = std::distance(intersections.begin(),it);
+                            delete intersections_inside[index];
+                            intersections_inside[index] = last_intersections_inside[j];
+                        } else {
+                            intersections.push_back(last_intersections[j]);
+                            insersections_inside.push_back(last_intersections_inside[j]);
+                        }
+                    }
+                    for (bool* inside : last_intersections_inside) {
+                        delete inside;
+                    }
+            }
+            set<set<std::array<double,3>>> f;
+            for (const int& edge_index : face) {
+                set<std::array<double,3>> edge;
+                for (const int& index : poly.edges[edge_index]) {
+                    edge.insert(poly.verts[index]);
+                }
+                f.insert(edge);
+            }
+            for (int box_index = 0; box_index < box.size(); box_index++) {
+                set<std::array<double,3>> edge1 = {box[(box_index-1)%box.size()],box[box_index]};
+                for (const set<std::array<double,3>>& edge2 : f) {
+                    bool no_break = true;
+                    for (std::array<double,3> point : edge1) {
+                        if (!Box::point_on_segment(round_edge(edge2), round_point(point))) {
+                            no_break = false;
+                            break
+                        }
+                    }
+                    if (no_break) {
+                        set<std::array<double,3>>::iterator it = edge2.begin();
+                        std::array<double,3> p1 = *(it);
+                        std::array<double,3> p2 = *(++it);
+                        std::array<std::array<double,3>,2> edge1_array(edge1.begin(),edge1.end());
+                        PointDistanceComparator comp = PointDistanceComparator(p1);
+                        sort(edge1_array.begin(), edge1_array.end(), comp);
+                        set<std::array<double,3>> edge3 = {p1, edge1_array[0]};
+                        if (Polyhedron::distance(p1, edge1_array[0])) {
+                            output.new_edges.add(edge3);
+                        }
+                        comp = PointDistanceComparator(p2);
+                        sort(edge1_array.begin(), edge1_array.end(), comp);
+                        edge3 = {p2, edge1_array[0]};
+                        if (Polyhedron::distance(p2, edge1_array[0])) {
+                            output.new_edges.add(edge3);
+                        }
+                        break;
+                    }
+                }
+            }
+            std::array<std::array<double,3>,4> box_old = {box[0], box[1], box[2], box[3]};
+            if (intersections.size() > 1) {
+                if (circuit[0][0] == circuit[1][0] && circuit[0][0] == circuit[2][0]) {
+                    if (round_float(circuit[0][0]) == round_float(self.x_min)) {
+                        output.box_index = 0;
+                    }
+                    if (round_float(circuit[0][0]) == round_float(self.x_max)) {
+                        output.box_index = 1;
+                    }
+                } else if (circuit[0][1] == circuit[1][1] && circuit[0][1] == circuit[2][1]) {
+                    if (round_float(circuit[0][1]) == round_float(self.y_min)) {
+                        output.box_index = 2;
+                    }
+                    if (round_float(circuit[0][1]) == round_float(self.y_max)) {
+                        output.box_index = 3;
+                    }
+                } else if (circuit[0][2] == circuit[1][2] && circuit[0][2] == circuit[2][2]) {
+                    if (round_float(circuit[0][2]) == round_float(self.z_min)) {
+                        output.box_index = 4;
+                    }
+                    if (round_float(circuit[0][2]) == round_float(self.z_max)) {
+                        output.box_index = 5;
+                    }
+                }
+                vector<std::array<double,3>> intersections_rounded;
+                for (const std::array<double,3>& intersection : intersections) {
+                    intersections_rounded.push_back(round_point(intersection));
+                    for (int j = 0; j < box.size(); j++) {
+                        if (Box::point_on_segment(round_edge({box[(j-1)%box.size()],box[j]}), round_point(intersection)) && round_point(box[j-1]) != round_point(intersection[0]) && round_point(box[j]) != round_point(intersection[0]) {
+                            box.insert(box.begin + j, intersection);
+                            break;
+                        }
+                    }
+                }
+                for (int i = 0; i < intersections.size(); i++) {
+                    vector<std::array<double,3>>::iterator it = find(box.begin(),box.end(),intersections[i]);
+                    int index;
+                    vector<std::array<double,3>> path1;
+                    if (it != box.end()) {
+                        index = std::distance(box.begin(),it);
+                        path1.push_back(intersections[i]);
+                    } else {
+                        it = find(box.begin(),box.end(),round_point(intersections[i]));
+                        index = std::distance(box.begin(),it);
+                        path1.push_back(round_point(intersections[i]));
+                    }
+                    bool* inside1 = intersections_inside[i];
+                    bool* inside2;
+                    index++;
+                    index %= box.size();
+                    while (true) {
+                        path1.push_back(box[index]);
+                        it = find(intersections_rounded.begin(),intersections_rounded.end(), round_point(box[index]));
+                        if (it != intersections_rounded.end()) {
+                            inside2 = intersections_inside[std::distance(intersections_inside.begin(),it)];
+                            break; 
+                        }
+                        index++;
+                        index %= box.size()
+                    }
+                    it = find(box.begin(),box.end(),intersections[i]);
+                    if (it != box.end()) {
+                        index = std::distance(box.begin(),it);
+                        path2.push_back(intersections[i]);
+                    } else {
+                        it = find(box.begin(),box.end(),round_point(intersections[i]));
+                        index = std::distance(box.begin(),it);
+                        path2.push_back(round_point(intersections[i]));
+                    }
+                    vector<std::array<double,3>> path2;
+                    bool* inside3 = intersections_inside[i];
+                    bool* inside4;
+                    index--;
+                    index %= box.size();
+                    while (true) {
+                        path2.push_back(box[index]);
+                        it = find(intersections_rounded.begin(),intersections_rounded.end(), round_point(box[index]));
+                        if (it != intersections_rounded.end()) {
+                            inside4 = intersections_inside[std::distance(intersections_inside.begin(),it)];
+                            break; 
+                        }
+                        index--;
+                        index %= box.size()
+                    }
+                    bool is_border_path1 = inside1 != NULL && inside2 != NULL && (!*(inside1) && *(inside2));
+                    bool is_border_path2 = inside3 != NULL && inside4 != NULL && (!*(inside3) && *(inside2));
+                    if (path1[path1.size()-1] == path2[path2.size()-1] && is_border_path1 && is_border_path2) {
+                        double distance1 = 0;
+                        for (int j = 1; j < path1.size(); j++) {
+                            distance1 += Polyhedron::distance(path1[j-1],path1[j])
+                        }
+                        double distance2 = 0;
+                        for (int j = 1; j < path2.size(); j++) {
+                            distance2 += Polyhedron::distance(path2[j-1],path2[j])
+                        }
+                        if (distance2 > distance1) {
+                            is_border_path1 = false;
+                        } else {
+                            is_border_path2 = false;
+                        }
+                    }
+                    std::array<vector<std::array<double,3>>,2> paths = {path1,path2};
+                    std::array<bool,2> is_border_path = {is_border_path1, is_border_path2};
+                    for (int path_index = 0; path_index < 2; path_index++) {
+                        if (is_border_path[path_index]) {
+                            bool no_break = true;
+                            for (int k = 0; k < paths[path_index].size()-1; k++) {
+                                std::array<double,3> point;
+                                for (int j = 0; j < 3; j++) {
+                                    point[j] = (paths[path_index][k][j]+paths[path_index][k+1][j])/2
+                                }
+                                if (!Box.inside_polyhedron(poly,point)) {
+                                    no_break = false;
+                                    break;
+                                }
+                            }
+                            if (no_break) {
+                                for (int j = 0; j < paths[path_index].size()-1; j++) {
+                                    set<std::array<double,3>> edge1 = {paths[path_index][j],paths[path_index][j+1]};
+                                    std::array<std::array<double,3>,2> edge1_array = {paths[path_index][j],paths[path_index][j+1]};
+                                    no_break = true;
+                                    for (const set<std::array<double,3>>& edge2 : output.new_edges) {
+                                        bool no_break2 = true;
+                                        for (const std::array<double,3> point : edge1) {
+                                            if (!Box::point_on_segment(round_edge(edge2), round_point(point))) {
+                                                no_break2 = false;
+                                                break;
+                                            }
+                                        }
+                                        if (no_break2) {
+                                            set<std::array<double,3>>::iterator it2 = edge2.begin();
+                                            std::array<double,3> p1 = *(it2);
+                                            it2++;
+                                            std::array<double,3> p2 = *(it2);
+                                            
+                                            PointDistanceComparator comp = PointDistanceComparator(p1);
+                                            sort(edge1_array.begin(),edge1_array.end(),comp);
+                                            if (Polyhedron::distance(p1,edge1_array[0])) {
+                                                output.new_edges.insert({p1,edge1_array[0]});
+                                            }
+                                            comp = PointDistanceComparator(p2);
+                                            sort(edge1_array.begin(),edge1_array.end(),comp);
+                                            if (Polyhedron::distance(p2,edge1_array[0])) {
+                                                output.new_edges.insert({p2,edge1_array[0]});
+                                            }
+                                            no_break = false;
+                                            break;
+                                        }
+                                    }
+                                    if (no_break) {
+                                        if (edge1.size() == 2) {
+                                            output.new_edges.insert(edge1);
+                                            output.path_edges.insert(edge1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                bool all = true;
+                for (const std::array<double,3>& box_point : box_old) {
+                    std::array<std::array<double,3>,4>::iterator it = find(intersections.begin(),intersections.end(),box_point);
+                    if (it == intersections.end() || intersections_inside[std::distance(intersections.begin(),it)] != NULL) {
+                        all = false;
+                        break;
+                    }
+                }
+                set<std::array<double,3>> difference;
+                set_difference(circuit.begin(), circuit.end(), box_old.begin(), box_old.end(), inserter(difference, difference.begin()));
+                if (all && !(circuit.size() == 4 && !difference.size())) {
+                    for (int k = 0; k < intersections.size(); k++) {
+                        set<std::array<double,3>> edge1 = {intersections[(k-1)%intersections.size()],intersections[k]};
+                        std::array<std::array<double,3>,2> edge1_array = {intersections[(k-1)%intersections.size()],intersections[k]};
+                        std::array<double,3> p1 = edge1_array[0];
+                        std::array<double,3> p2 = edge1_array[1];
+                        set<set<std::array<double,3>>> edge_union(output.new_edges.begin(),output.new_edges.end());
+                        for (const int& edge_index : face) {
+                            set<std::array<double,3>> edge;
+                            for (const int& index : poly.edges[edge_index]) {
+                                edge.insert(poly.verts[index]);
+                            }
+                            edge_union.insert(edge);
+                        }
+                        bool any = false;
+                        std::array<double,3> p3 = {(p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2};
+                        for (set<std::array<double,3>> edge2 : edge_union) {
+                            if (Box::point_on_segment(round_edge(edge2), round_point(p3))) {
+                                any = true;
+                                break;
+                            } 
+                        }
+                        if (!any) {
+                            continue;
+                        }
+                        bool no_break = true;
+                        for (const set<std::array<double,3>>& edge2 : edge_union) {
+                            bool no_break2 = true;
+                            for(const std::array<double,3>& point : edge1) {
+                                if (!Box::point_on_segment(round_edge(edge2), round_point(point))) {
+                                    no_break2 = false;
+                                    break;
+                                }
+                            }
+                            if (no_break2) {
+                                if (output.new_edges.find(edge2) != output.end()) {
+                                    output.new_edges.erase(edge2);
+                                    set<std::array<double,3>>::iterator it = edge2.begin();
+                                    p1 = *(it);
+                                    it++;
+                                    p2 = *(it);
+                                    PointDistanceComparator comp = PointDistanceComparator(p1);
+                                    sort(edge1_array.begin(),edge1_array.end(),comp);
+                                    if (Polyhedron::distance(p1,edge1_array[0])) {
+                                        output.new_edges.insert(p1,edge1_array[0])
+                                    }
+                                    comp = PointDistanceComparator(p2);
+                                    sort(edge1_array.begin(),edge1_array.end(),comp);
+                                    if (Polyhedron::distance(p2,edge1_array[0])) {
+                                        output.new_edges.insert(p2,edge1_array[0])
+                                    }
+                                } else {
+                                    output.new_edges.insert(edge1);
+                                    output.path_edges.insert(edge1);
+                                }
+                                no_break = false;
+                                break;
+                            }
+                        }
+                        if (no_break) {
+                            output.new_edges.insert(edge1);
+                            output.path_edges.insert(edge1);
+                        }
+                    }
+                }
+            } else if (!intersections.size()) {
+                bool any = false;
+                for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(circuit)) {
+                    if (Polyhedron.inside_triangle(triangle,box[0])) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (box.size() && any) {
+                    for (int j = 0; j < box.size(); j++) {
+                        output.new_edges.insert({box[(j-1)%box.size()],box[j]})
+                    }
+                    if (circuit[0][0] == circuit[1][0] && circuit[0][0] == circuit[2][0]) {
+                        if (round_float(circuit[0][0]) == round_float(self.x_min)) {
+                            output.box_index = 0;
+                        }
+                        if (round_float(circuit[0][0]) == round_float(self.x_max)) {
+                            output.box_index = 1;
+                        }
+                    } else if (circuit[0][1] == circuit[1][1] && circuit[0][1] == circuit[2][1]) {
+                        if (round_float(circuit[0][1]) == round_float(self.y_min)) {
+                            output.box_index = 2;
+                        }
+                        if (round_float(circuit[0][1]) == round_float(self.y_max)) {
+                            output.box_index = 3;
+                        }
+                    } else if (circuit[0][2] == circuit[1][2] && circuit[0][2] == circuit[2][2]) {
+                        if (round_float(circuit[0][2]) == round_float(self.z_min)) {
+                            output.box_index = 4;
+                        }
+                        if (round_float(circuit[0][2]) == round_float(self.z_max)) {
+                            output.box_index = 5;
+                        }
+                    }
+                }
+                for (int i = 0; i < circuit.size(); i++) {
+                    vector<std::array<dobule,3>>::iterator it1 = find(poly.verts.begin(),poly.verts.end(),circuit[(i-1)%circuit.size()]);
+                    vector<std::array<dobule,3>>::iterator it2 = find(poly.verts.begin(),poly.verts.end(),circuit[i]);
+                    if (it1 != poly.verts.end() && it2 != poly.verts.end() && find(poly.edges.begin(),poly.edges.end(),{std::distance(poly.verts.begin(),it1),std::distance(poly.verts.begin(),it2)})) {
+                        output.new_edges.insert({circuit[(i-1)%circuit.size()],circuit[i]});
+                    }
+                }
+            } 
+        }
+        for (bool* inside : intersections_inside) {
+            delete inside;
+        }
+        return output;
+    }
     Polyhedron del(Polyhedron poly) {
         std::array<double,2> x_min_max = {x_min, x_max};
         std::array<double,2> y_min_max = {y_min, y_max};
@@ -829,16 +1508,6 @@ class Box {
             }
             box_faces.push_back(box_face);
         }
-        class PointDistanceComparator {
-          public:
-            std::array<double,3> point = {0,0,0};
-            PointDistanceComparator(std::array<double,3> point) {
-                this.point = point;
-            }
-            bool operator()(std::array<double,3> a, std::array<double,3> b) const {
-                return a + b;
-            }
-        };
         std::array<double,3> center = {(x_min+x_max)/2,(y_min+y_max)/2,(z_min+z_max)/2};
         if (!Box::inside_polyhedron(poly, center)) {
             bool triple_break = false;
@@ -1080,6 +1749,501 @@ class Box {
                             }
                         }
                     }
+                }
+            }
+        }
+        set<vector<std::array<double,3>>> circuits = Box::del_circuit_helper(path_edges);
+        for (const vector<std::array<double,3>>& circuit : circuits) {
+            bool no_break = true;
+            for (int face_index = 0; face_index < faces.size(); face_index++) {
+                if (face_index >= old_face_indices.size()) {
+                    break;
+                }
+                set<std::array<double,3>> point_set;
+                for (const std::array<double,3>& point : circuit) {
+                    point_set.insert(Polyhedron::round_point(point));
+                }
+                for (const set<std::array<double,3>>& edge : face) {
+                    for (const std::array<double,3>& point : edge) {
+                        point_set.insert(Polyhedron::round_point(point));
+                    }
+                }
+                if (Box::coplanar(point_set)) {
+                    vector<std::array<double,3>> exterior_circuit = *Polyhedron::find_exterior_circuit(poly.circuits(old_face_indices[face_index]));
+                    for (int i = 0; i < circuit.size(); i++) {
+                        if (face.find({circuit[(i-1)%circuit.size()],circuit[i]} != face.end()) {
+                            bool any = false;
+                            for (int j = 0; j < exterior_circuit.size(); j++) {
+                                if (Box::point_on_segment({exterior_circuit[(j-1)%exterior_circuit.size()],exterior_circuit[j]},circuit[(i-1)%circuit.size()]) && Box::point_on_segment({exterior_circuit[(j-1)%exterior_circuit.size()]},circuit[i])) {
+                                    any = true;
+                                    break;
+                                }
+                            }
+                            if (!any) {
+                                face.erase({circuit[(i-1)%circuit.size()],circuit[i]});
+                            }
+                        } else {
+                            face.insert({circuit[(i-1)%circuit.size()],circuit[i]});
+                        }
+                    }
+                    no_break = false;
+                    break;
+                }
+            }
+            if (no_break) {
+                set<set<std::array<double,3>>> new_face;
+                for (int i = 0; i < circuit.size(); i++) {
+                    new_face.insert({circuit[(i-1)%circuit.size()],circuit[i]});
+                }
+                faces.push_back(new_face);
+            }
+        }
+        while (true) {
+            bool triple_break = false;
+            for (const set<set<std::array<double,3>>>& face : faces) {
+                for (const set<std::array<double,3>>& edge1 : face) {
+                    for (const set<std::array<double,3>>& edge2 : face) {
+                        set<std::array<double,3>> edge_intersection;
+                        set_intersection(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(), inserter(edge_intersection, edge_intersection.begin()));
+                        set<std::array<double,3>> edge_union;
+                        set_union(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(), inserter(edge_union, edge_union.begin()));
+                        if (edge_intersection.size() == 1 && Box::colinear(edge_union)) {
+                            face.erase(edge1);
+                            face.erase(edge2);
+                            map<std::array<double,3>,std::array<double,3>> point_map;
+                            for (const std::array<double,3>& point : edge1) {
+                                point_map[round_point(point)] = point;
+                            }
+                            for (const std::array<double,3>& point : edge2) {
+                                point_map[round_point(point)] = point;
+                            }
+                            set<std::array<double,3>> edge1_rounded = round_edge(edge1);
+                            set<std::array<double,3>> edge2_rounded = round_edge(edge2);
+                            set<std::array<double,3>> edge_rounded_sym_diff;
+                            set_symmetric_difference(edge1_rounded.begin(),edge1_rounded.end(), edge2_rounded.begin(), edge2_rounded.end(), inserter(edge_rounded_sym_diff, edge_rounded_sym_diff.begin()));
+                            if (edge_rounded_sym_diff.size() == 2) {
+                                set<std::array<double,3>> new_edge;
+                                for (const std::array<double,3>& point : edge_rounded_sym_diff) {
+                                    new_edge.insert(point_map[point]);
+                                }
+                                face.insert(new_edge)
+                            } else {
+                                int max_distance = 0;
+                                set<std::array<double,3>> max_edge;
+                                for (const std::array<double,3>& x : edge1) {
+                                    for (const std::array<double,3>& y : edge2) {
+                                        if (Polyhedron::distance(x,y) > max_distance) {
+                                            max_distance = Polyhedron::distance(x,y);
+                                            max_edge = {x,y};
+                                        }
+                                    }
+                                }
+                                face.add(max_edge);
+                            }
+                            triple_break = true;
+                            break;
+                        }
+                    }
+                    if (triple_break) {
+                       break; 
+                    }
+                }
+                if (triple_break) {
+                    break;
+                }
+            }
+            if (!triple_break) {
+                break
+            }
+        }
+        for (int face_index = 0; face_index < faces.size();) {
+            if (!faces[face_index].size()) {
+                faces.erase(faces.begin() + face_index);
+            } else {
+                face_index++;
+            }
+        }
+        Polyhedron new_poly;
+        vector<set<std::array<double,3>>> edges_grounded;
+        for (const set<set<std::array<double,3>>>& face : faces) {
+            set<int> face;
+            for (const set<std::array<double,3>>& edge : face) {
+                for (const std::array<double,3> point : edge) {
+                    new_poly.verts.push_back(points);
+                }
+                edges_grounded.push_back(edge);
+                face.insert(edges_grounded.size()-1);
+            }
+            new_poly.faces.push_back(face);
+        }
+        for (const set<std::array<double,3>>& edge_grounded : edges_grounded) {
+            set<int> edge;
+            for (const std::array<double,3>& point : edge_grounded) {
+                vector<std::array<double,3>>::iterator it = find(new_poly.verts.begin(),new_poly.verts.end(),point);
+                edge.insert(std::distance(new_poly.verts.begin(),it));
+            }
+            new_poly.edges.push_back(edge);
+        }
+        return new_poly;
+    }
+    static set<vector<std::array<double,3>>> add_circuit_helper(set<set<std::array<double,3>>>face, set<std::array<double,3>> start, set<std::array<double,3>> previous, set<std::array<double,3>> current, vector<std::array<double,3>> path) {
+        map<std::array<double,3>,set<set<std::array<double,3>>>> edge_lookup;
+        for (const set<std::array<double,3>>& edge : face) {
+            for (const std::array<double,3>& point : edge) {
+                edge_lookup[round_point(point)].insert(edge);
+            }
+        }
+        set<vector<std::array<double,3>>> output;
+        if (current == start) {
+            output.insert(path);
+            return output;
+        }
+        if (seen.find(current) != seen.end()) {
+            return output;
+        }
+        seen.insert(current);
+        set<std::array<double,3>> difference;
+        set_difference(current.begin(),current.end(),previous.begin(),previous.end(),inserter(difference,difference.begin()));
+        std::array<double,3> point = *(difference.begin());
+        if (find(path.begin(), path.end(), point) != path.end()) {
+            return output;
+        }
+        path.push_back(point);
+        previous = current;
+        set<set<std::array<double,3>>> temp(edge_lookup[round_point(point)].begin(),edge_lookup[round_point(point)].end());
+        temp.erase(previous);
+        for (const set<std::array<double,3>>& x : temp) {
+            set<std::array<double,3>> point_union;
+            for (const std::array<double,3>& y : path) {
+                point_union.insert(round_point(y));
+            }
+            set<std::array<double,3>> edge = round_edge(x);
+            point_union.insert(edge.begin(),edge.end());
+            if (Box::coplanar(point_union)) {
+                current = x;
+                set<vector<std::array<double,3>>> intermediate = Box::add_circuit_helper(path_edges, start, previous, current, path);
+                output.insert(intermediate.begin(), intermediate.end());
+            }
+        }
+        vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
+        for (int i = 0; i < output_list.size(); i++) {
+            for (int j = 0; j < output_list.size(); j++) {
+                set<std::array<double,3>> difference2;
+                set_difference(output_list[i].begin(),output_list[i].end(),output_list[j].begin(),output_list[j].end(),inserter(difference2,difference2.begin()));
+                if (output_list[j].size() > output_list[i].size() && !difference2.size() && output.find(output_list[j]) != output.end()) {
+                    output.erase(output_list[j]);
+                }
+                if (output_list[j].size() == output_list[i].size() && !difference2.size() && j > i && output.find(output_list[j]) != output.end()) {
+                    output.erase(output_list[j]);
+                }
+                if (j > i && !(difference2.size()) && output.find(output_list[j]) != output.end()) {
+                    vector<std::array<double,3>> y_r(output_list[j].begin(),output_list[j].end());
+                    std::reverse(y_r.begin(),y_r.end());
+                    vector<std::array<double,3>>::iterator it = find(output_list[j].begin(),output_list[j].end(), output_list[i][0])
+                    int index_x0_in_y = std::distance(output_list[j].begin(), it);
+                    it = find(y_r.begin(),y_r.end(), output_list[i][0]);
+                    int index_x0_in_y_r = std::distance(y_r.begin(), it);
+                    vector<std::array<double,3>> y_rearranged(output_list[j].begin()+index_x0_in_y,output_list[j].end());
+                    y_rearranged.insert(output_list[j].begin(),output_list[j].begin()+index_x0_in_y);
+                    vector<std::array<double,3>> y_rearranged_sliced(y_rearranged.begin(),y_rearranged.begin()+output_list[i].size());
+                    vector<std::array<double,3>> y_r_rearranged(y_r.begin()+index_x0_in_y_r,y_r.end());
+                    y_r_rearranged.insert(y_r.begin(),y_r.begin()+index_x0_in_y_r);
+                    vector<std::array<double,3>> y_r_rearranged_sliced(y_r_rearranged.begin(),y_r_rearranged.begin()+output_list[i].size());
+                    if (y_rearranged_sliced == output_list[i] || y_r_rearranged_sliced == output_list[i]) {
+                        if (output.find(output_list[j]) != output.end()) {
+                            output.erase(output_list[j])
+                        }
+                    }
+                }
+            }
+        }
+        return output;
+    }
+    static set<vector<std::array<double,3>>> add_circuit_helper(set<set<std::array<double,3>>> face) {
+        map<std::array<double,3>,set<set<std::array<double,3>>>> edge_lookup;
+        for (const set<std::array<double,3>>& edge : face) {
+            for (const std::array<double,3>& point : edge) {
+                edge_lookup[round_point(point)].insert(edge);
+            }
+        }
+        set<vector<std::array<double,3>>> output;
+        for (const set<std::array<double,3>>& edge : face) {
+            vector<std::array<double,3>> path;
+            set<std::array<double,3>> start = edge;
+            std::array<double,3> point = *(start.begin())
+            path.push_back(point);
+            set<set<std::array<double,3>>> temp(edge_lookup[round_point(point)].begin(),edge_lookup[round_point(point)].end());
+            temp.erase(start);
+            for (const set<std::array<double,3>>& x : temp) {
+                set<std::array<double,3>> current = x;
+                set<vector<std::array<double,3>>> intermediate = Box::add_circuit_helper(path_edges, start, previous, current, path);
+                circuits.insert(intermediate.begin(),intermediate.end());
+            }
+        }
+        vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
+        for (int i = 0; i < output_list.size(); i++) {
+            for (int j = 0; j < output_list.size(); j++) {
+                set<std::array<double,3>> difference2;
+                set_difference(output_list[i].begin(),output_list[i].end(),output_list[j].begin(),output_list[j].end(),inserter(difference2,difference2.begin()));
+                if (output_list[j].size() > output_list[i].size() && !difference2.size() && output.find(output_list[j]) != output.end()) {
+                    output.erase(output_list[j]);
+                }
+                if (output_list[j].size() == output_list[i].size() && !difference2.size() && j > i && output.find(output_list[j]) != output.end()) {
+                    output.erase(output_list[j]);
+                }
+                if (j > i && !(difference2.size()) && output.find(output_list[j]) != output.end()) {
+                    vector<std::array<double,3>> y_r(output_list[j].begin(),output_list[j].end());
+                    std::reverse(y_r.begin(),y_r.end());
+                    vector<std::array<double,3>>::iterator it = find(output_list[j].begin(),output_list[j].end(), output_list[i][0])
+                    int index_x0_in_y = std::distance(output_list[j].begin(), it);
+                    it = find(y_r.begin(),y_r.end(), output_list[i][0]);
+                    int index_x0_in_y_r = std::distance(y_r.begin(), it);
+                    vector<std::array<double,3>> y_rearranged(output_list[j].begin()+index_x0_in_y,output_list[j].end());
+                    y_rearranged.insert(output_list[j].begin(),output_list[j].begin()+index_x0_in_y);
+                    vector<std::array<double,3>> y_rearranged_sliced(y_rearranged.begin(),y_rearranged.begin()+output_list[i].size());
+                    vector<std::array<double,3>> y_r_rearranged(y_r.begin()+index_x0_in_y_r,y_r.end());
+                    y_r_rearranged.insert(y_r.begin(),y_r.begin()+index_x0_in_y_r);
+                    vector<std::array<double,3>> y_r_rearranged_sliced(y_r_rearranged.begin(),y_r_rearranged.begin()+output_list[i].size());
+                    if (y_rearranged_sliced == output_list[i] || y_r_rearranged_sliced == output_list[i]) {
+                        if (output.find(output_list[j]) != output.end()) {
+                            output.erase(output_list[j])
+                        }
+                    }
+                }
+            }
+        }
+        return output;
+    }
+    Polyhedron add(poly) {
+        vector<set<std::array<double,3>>> edges;
+        for (const set<int>& edge : poly.edges) {
+            set<std::array<double,3>> edge_grounded;
+            for (const int& index : edge) {
+                edge_grounded.insert(poly.verts[index]);
+            }
+            edges.push_back(edge_grounded);
+        }
+        vector<set<set<std::array<double,3>>>> faces;
+        for (const set<int>& face : poly.face) {
+            set<set<std::array<double,3>>> face_grounded;
+            for (const int& index : face) {
+                face_grounded.insert(edges[index]);
+            }
+            faces.push_back(face_grounded);
+        }
+        vector<set<std:array<double,3>>> new_edges;
+        set<std:array<double,3>> new_edge;
+        std::array<set<set<std::array<double,3>>>,6> new_faces;
+        new_edge = {{x_min,y_min,z_min},{x_max,y_min,z_min}};
+        new_edges.push_back(new_edge);
+        new_faces[2].insert(new_edge);
+        new_faces[4].insert(new_edge);
+        new_edge = {{x_min,y_max,z_min},{x_max,y_max,z_min}};
+        new_edges.push_back(new_edge);
+        new_faces[3].insert(new_edge);
+        new_faces[4].insert(new_edge);
+        new_edge = {{x_min,y_min,z_max},{x_max,y_min,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[2].insert(new_edge);
+        new_faces[5].insert(new_edge);
+        new_edge = {{x_min,y_max,z_max},{x_max,y_max,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[3].insert(new_edge);
+        new_faces[5].insert(new_edge);
+        new_edge = {{x_min,y_min,z_min},{x_min,y_max,z_min}};
+        new_edges.push_back(new_edge);
+        new_faces[0].insert(new_edge);
+        new_faces[4].insert(new_edge);
+        new_edge = {{x_max,y_min,z_min},{x_max,y_max,z_min}};
+        new_edges.push_back(new_edge);
+        new_faces[1].insert(new_edge);
+        new_faces[4].insert(new_edge);
+        new_edge = {{x_min,y_min,z_max},{x_min,y_max,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[0].insert(new_edge);
+        new_faces[5].insert(new_edge);
+        new_edge = {{x_max,y_min,z_max},{x_max,y_max,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[1].insert(new_edge);
+        new_faces[5].insert(new_edge);
+        new_edge = {{x_min,y_min,z_min},{x_min,y_min,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[0].insert(new_edge);
+        new_faces[2].insert(new_edge);
+        new_edge = {{x_max,y_min,z_min},{x_max,y_min,z_max}};
+        new_faces[1].insert(new_edge);
+        new_faces[2].insert(new_edge);
+        new_edge = {{x_min,y_max,z_min},{x_min,y_max,z_max}};
+        new_edges.push_back(new_edge);
+        new_faces[0].insert(new_edge);
+        new_faces[3].insert(new_edge);
+        new_edge = {{x_max,y_max,z_min},{x_max,y_max,z_max}};
+        new_faces[1].insert(new_edge);
+        new_faces[3].insert(new_edge);
+        map<int,set<set<set<std::array<double,3>>>>> mapping;
+        for (int face_index1 = 0; face_index1 < faces.size(); face_index_1++) {
+            vector<std::array<double,3>> circuit = Polyhedron::circuit_cut(poly.circuits(face_index1));
+            bool any = false;
+            for (const set<std::array<double,3>>& edge : faces[face_index1]) {
+                if (this.insersect(edge)) {
+                    any = true;
+                    break;
+                }
+            }
+            if (any) {
+                for (int face_index2 = 0; face_index2 < new_faces.size(); face_index2++) {
+                    any = false;
+                    for (int i = 0; i < circuit.size(); i++) {
+                        for (const set<std::array<double,3>>& y : new_faces[face_index2]) {
+                            if (find(poly.verts.begin(),poly.verts.end(), circuit[(i-1)%circuit.size()]) != poly.verts.end() && find(poly.verts.begin(),poly.verts.end(), circuit[i]) != poly.verts.end()) {
+                                bool any2 = false;
+                                for (const set<std::array<double,3>>& z : edges) {
+                                    if (z.find(circuit[(i-1)%circuit.size()]) != z.end() && z.find(circuit[i]) != z.end()) {
+                                        any2 = true;
+                                        break;
+                                    }
+                                }
+                                if (Box::intersect_segments({circuit[(i-1)%circuit.size()],circuit[i]},y) != NULL && any2) {
+                                    any = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (any) {
+                            break; 
+                        }
+                    }
+                    set<std::array<double,3>> point_union;
+                    for (const set<std::array<double,3>>& edge : faces[face_index1]) {
+                        for (const std::array<double,3>& point : edge) {
+                            point_union.insert(round_point(point));
+                        }
+                    }
+                    for (const set<std::array<double,3>>& edge : new_faces[face_index2]) {
+                        for (const std::array<double,3>& point : edge) {
+                            point_union.insert(round_point(point));
+                        }
+                    }
+                    if (Box::coplanar(point_union) && any) {
+                        set<set<std:array<double,3>>> face_union(new_face[face_index2/2].begin(),(new_face[face_index2/2].end());
+                        face_union.insert(new_face[face_index2/2+1].begin(),(new_face[face_index2/2+1].end());
+                        set<set<std:array<double,3>>> difference;
+                        set_difference(new_edges.begin(),new_edges.end(),face_union.begin(),face_union.end(), inserter(difference, difference.begin()));
+                        bool double_break = false;
+                        bool triple_break = false;
+                        for (const std::array<double,3>& p1 : circuit) {
+                            if (find(poly.verts.begin(), poly.verts.end(), p1) != poly.verts.end()) {
+                                set<std::array<double,3>> point_set;
+                                for (const set<std::array<double,3>>& edge : faces[face_index1]) {
+                                    for (const std::array<double,3>& point : edge) {
+                                        point_set.insert(point);
+                                    }
+                                }
+                                for (const set<std::array<double,3>>& edge1 : edges) {
+                                    if (edge1.find(p1) != edge1.end()) {
+                                        std::array<double,3> p2;
+                                        for (const std::array<double,3>& p : edge1) {
+                                            if (p != p1) {
+                                                p2 = p;
+                                            }
+                                        }
+                                        if (point_set.find(p2) == point_set.end()) {
+                                            for (const set<std::array<double,3>>& edge2 : difference) {
+                                                set<std::array<double,3>>::iterator it = edge2.beign()
+                                                std::array<double,3> p3 = *(it);
+                                                it++;
+                                                std::array<double,3> p4 = *(it);
+                                                if (Box::point_on_segment(edge2, p1) && Box::point_on_segment(edge2, p2) || (Box::point_on_segment(edge1, p3) && Box::point_on_segment(edge1, p4))) {
+                                                    triple_break = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (triple_break) {
+                                        break;
+                                    }
+                                }
+                                for (const set<std::array<double,3>>& edge1 : edges) {
+                                    std::array<double,3> p2;
+                                    for (const std::array<double,3>& p : edge1) {
+                                        if (p != p1) {
+                                            p2 = p;
+                                        }
+                                    }
+                                    if (point_set.find(p2) == point_set.end() && this.intersect(edge1)) {
+                                        double_break = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (double_break || triple_break) {
+                                break;
+                            }
+                        }
+                        if (double_break || triple_break) {
+                            mapping[face_index2].add(faces[face_index1]);
+                        }
+                    }
+                }
+            }
+            for (int face_index2 = 0; face_index2 < new_faces.size(); face_index2++) {
+                set<std::array<double,3>> point_union;
+                for (const set<std::array<double,3>>& edge : faces[face_index1]) {
+                    for (const std::array<double,3>& point : edge) {
+                        point_union.insert(round_point(point));
+                    }
+                }
+                for (const set<std::array<double,3>>& edge : new_faces[face_index2]) {
+                    for (const std::array<double,3>& point : edge) {
+                        point_union.insert(round_point(point));
+                    }
+                }
+                any = false;
+                for (const set<std::array<double,3>>& y : new_faces[face_index2]) {
+                    if (find(poly.verts.begin(),poly.verts.end(), circuit[(i-1)%circuit.size()]) != poly.verts.end() && find(poly.verts.begin(),poly.verts.end(), circuit[i]) != poly.verts.end()) {
+                        bool any2 = false;
+                        for (const set<std::array<double,3>>& z : edges) {
+                            if (z.find(circuit[(i-1)%circuit.size()]) != z.end() && z.find(circuit[i]) != z.end()) {
+                                any2 = true;
+                                break;
+                            }
+                        }
+                        if (Box::intersect_segments({circuit[(i-1)%circuit.size()],circuit[i]},y) != NULL && any2) {
+                            any = true;
+                            break;
+                        }
+                    }
+                }
+                set<std::array<double,3>> point_set;
+                for (const set<std::array<double,3>>& edge : new_faces[face_index2]) {
+                    for (const std::array<double,3>& point : edge) {
+                        point_set.insert(point);
+                    }
+                }
+                bool all1 = true;
+                for (const std::array<double,3>& x : point_set) {
+                    bool any2 = false;
+                    for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(circuit)) {
+                        if (Polyhedron::inside_triangle(triangle, x)) {
+                            any2 = true;
+                            break;
+                        }
+                    }
+                    if (!any2) {
+                        all1 = false;
+                        break;
+                    }
+                }
+                bool all2 = true; 
+                for (const std::array<double,3>& x : circuit) {
+                    if (x[0] < x_min || x[0] > x_max || x[1] < y_min || x[1] > y_max || x[2] < z_min || x[2] > z_max) {
+                        all2 = false;
+                        break;
+                    }
+                }
+                if (Box::coplanar(point_union) && (any || all1 || all2)) {
+                    mapping[face_index2].add(faces[face_index1]);
                 }
             }
         }

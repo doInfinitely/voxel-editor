@@ -264,8 +264,8 @@ class Box:
                 path.append(point)
                 temp = list(edge_lookup[round_point(point)] - set([start]))
                 #print(path, temp)
-                for i in range(len(temp)):
-                    current = temp[i]
+                for x in temp:
+                    current = x
                     circuits.update(Box.delete_circuit_helper(path_edges, start, start, current, path, seen))
                 del path[-1]
         else:
@@ -278,14 +278,14 @@ class Box:
             seen.add(current)
             point = list(current - previous)[0]
             if point in path:
-                return {}
+                return set()
             path.append(point)
             previous = current
             temp = list(edge_lookup[round_point(point)]-set([previous]))
             #print(path, temp)
-            for i in range(len(temp)):
-                if Box.coplanar(set(round_point(x) for x in path)|round_edge(temp[i])):
-                    current = temp[i]
+            for x in temp:
+                if Box.coplanar(set(round_point(y) for y in path)|round_edge(x)):
+                    current = x
                     circuits.update(Box.delete_circuit_helper(path_edges, start, previous, current, path, seen))
             del path[-1]
         circuits_list = list(circuits)
@@ -341,21 +341,13 @@ class Box:
                                     if dim == 1:
                                         triangles = [[(self.x_min,w,self.z_min),(self.x_max,w,self.z_min),(self.x_max,w,self.z_max)],[(self.x_min,w,self.z_min),(self.x_min,w,self.z_max),(self.x_max,w,self.z_max)]]
                                     if dim == 2:
-                                            triangles = [[(self.x_min,self.y_min,w),(self.x_max,self.y_min,w),(self.x_max,self.y_max,w)],[(self.x_min,self.y_min,w),(self.x_min,self.y_max,w),(self.x_max,self.z_max,w)]]
-                                    if vec[dim] > 0:
-                                        if w > p1[dim]:
-                                            projection = [p1[0],p1[1],p1[2]]
-                                            projection[dim] = w
-                                            projection = tuple(projection)
-                                            if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
-                                                intersection += 1
-                                    else:
-                                        if w < p1[dim]:
-                                            projection = [p1[0],p1[1],p1[2]]
-                                            projection[dim] = w
-                                            projection = tuple(projection)
-                                            if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
-                                                intersection += 1
+                                            triangles = [[(self.x_min,self.y_min,w),(self.x_max,self.y_min,w),(self.x_max,self.y_max,w)],[(self.x_min,self.y_min,w),(self.x_min,self.y_max,w),(self.x_max,self.y_max,w)]]
+                                    if (vec[dim] > 0 and w > p1[dim]) or (vec[dim] < 0 and w < p1[dim]):
+                                        projection = [p1[0],p1[1],p1[2]]
+                                        projection[dim] = w
+                                        projection = tuple(projection)
+                                        if any(Polyhedron.inside_triangle(x,projection) for x in triangles):
+                                            intersection += 1
                         if intersection%2 == 0:
                             double_break = True
                             break
@@ -542,8 +534,8 @@ class Box:
                 is_border_path1 = inside1 is not None and inside2 is not None and not inside1 and inside2
                 is_border_path2 = inside3 is not None and inside4 is not None and not inside3 and inside4
                 if path1[-1] == path2[-1] and is_border_path1 and is_border_path2:
-                    distance1 = sum(distance(path1[i-1],x) for i,x in enumerate(path1[:-1]))
-                    distance2 = sum(distance(path2[i-1],x) for i,x in enumerate(path2[:-1]))
+                    distance1 = sum(distance(path1[i-1],x) for i,x in enumerate(path1) if i > 0)
+                    distance2 = sum(distance(path2[i-1],x) for i,x in enumerate(path2) if i > 0)
                     if distance2 > distance1:
                         is_border_path1 = False
                     else:
@@ -830,8 +822,8 @@ class Box:
                     break
                 if Box.coplanar(set(round_point(x) for x in circuit)|{round_point(point) for edge in face for point in edge}):
                     #print('combine', circuit, poly.circuits(old_face_indices[face_index]))
+                    exterior_circuit = Polyhedron.find_exterior_circuit(poly.circuits(old_face_indices[face_index]))
                     for i,x in enumerate(circuit):
-                        exterior_circuit = Polyhedron.find_exterior_circuit(poly.circuits(old_face_indices[face_index]))
                         if frozenset([circuit[i-1],x]) in face:
                             if not any(Box.point_on_segment(frozenset([exterior_circuit[j-1],y]),circuit[i-1]) and Box.point_on_segment(frozenset([exterior_circuit[j-1],y]),x) for j,y in enumerate(exterior_circuit)):
                                 #print('howdy', frozenset([circuit[i-1],x]))
@@ -924,8 +916,8 @@ class Box:
                 path.append(point)
                 temp = list(edge_lookup[round_point(point)] - set([start]))
                 #print(path, temp)
-                for i in range(len(temp)):
-                    current = temp[i]
+                for x in temp:
+                    current = x
                     circuits.update(Box.add_circuit_helper(face, start, start, current, path))
                 del path[-1]
         else:
@@ -940,9 +932,9 @@ class Box:
             previous = current
             temp = list(edge_lookup[round_point(point)]-set([previous]))
             #print(path, temp)
-            for i in range(len(temp)):
-                if Box.coplanar(set(round_point(x) for x in path)|round_edge(temp[i])):
-                    current = temp[i]
+            for x in temp:
+                if Box.coplanar(set(round_point(y) for y in path)|round_edge(x)):
+                    current = x
                     circuits.update(Box.add_circuit_helper(face, start, previous, current, path))
             del path[-1]
         circuits_list = list(circuits)
@@ -952,7 +944,7 @@ class Box:
                     circuits.remove(y)
                 if len(y)==len(x) and not len(set(x)-set(y)) and j > i and y in circuits:
                     circuits.remove(y)
-                if x != y and not len(set(x)-set(y)) and j > i and y in circuits:
+                if not len(set(x)-set(y)) and j > i and y in circuits:
                     y_r = tuple(reversed(y))
                     if (y[y.index(x[0]):]+y[:y.index(x[0])])[:len(x)] == x or (y_r[y_r.index(x[0]):]+y_r[:y_r.index(x[0])])[:len(x)] == x:
                         circuits.remove(y)
@@ -1017,7 +1009,7 @@ class Box:
             if any(self.intersect(edge) for edge in face1):
                 for face_index2, face2 in enumerate(new_faces):
                     print(circuit, poly.circuits(face_index1), face1)
-                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)):
+                    if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and circuit[i-1] in z and x in z for z in edges)):
                         temp = set(new_edges)-new_faces[face_index2//2]-new_faces[face_index2//2+1]
                         double_break = False
                         triple_break = False
@@ -1047,7 +1039,7 @@ class Box:
                                 mapping[face_index2] = set()
                             mapping[face_index2].add(face1)
             for face_index2, face2 in enumerate(new_faces):
-                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and poly.verts.index(circuit[i-1]) in z and poly.verts.index(x) in z for z in poly.edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
+                if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and circuit[i-1] in z and x in z for z in edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
                     if all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit):
                         if face_index2 not in mapping:
                             mapping[face_index2] = set()
@@ -1632,7 +1624,7 @@ class Polyhedron:
         circuits_list = list(circuits)
         for i,x in enumerate(circuits_list):
             for j,y in enumerate(circuits_list[i+1:]):
-                if x != y and not len(set(x)-set(y)):
+                if not len(set(x)-set(y)):
                     y_r = tuple(reversed(y))
                     if (y[y.index(x[0]):]+y[:y.index(x[0])])[:len(x)] == x or (y_r[y_r.index(x[0]):]+y_r[:y_r.index(x[0])])[:len(x)] == x:
                         if y in circuits:
@@ -1692,7 +1684,9 @@ class Polyhedron:
                                 #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
                                 break
                     else:
-                        return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple([x for k,x in enumerate(circuit) if k != i])
+                        remainder = [x for k,x in enumerate(circuit) if k != i]
+                        remainder = tuple([x for k,x in enumerate(remainder) if x != remainder[k-1]])
+                        return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), remainder
     def triangulate(circuit):
         #print(circuit)
         output = []
