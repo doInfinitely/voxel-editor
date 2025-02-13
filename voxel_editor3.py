@@ -225,7 +225,7 @@ class Box:
         return False
 
     def inside_polyhedron(poly, point):
-        print('inside_polyhedron_start')
+        #print('inside_polyhedron_start')
         intersections = 0
         for face_index,face in enumerate(poly.faces):
             circuits = poly.circuits(face_index)
@@ -236,11 +236,11 @@ class Box:
             if circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] > point[2]:
                 projection = (point[0],point[1],circuit[0][2])
                 if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)) and not any(Polyhedron.inside_triangle(y,projection) for x in interior_circuits for y in Polyhedron.triangulate(x)):
-                    print('inside_polyhedron', circuit, interior_circuits)
+                    #print('inside_polyhedron', circuit, interior_circuits)
                     intersections += 1
                 if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
                     return True
-        print('inside_polyhedron_end')
+        #print('inside_polyhedron_end')
         return intersections % 2 == 1
     
     def delete_circuit_helper(path_edges, start=None, previous=None, current=None, path=None, seen=None):
@@ -357,8 +357,10 @@ class Box:
                 print('face processing time', face_index, time.time()-start_time_face)
                 return new_edges, path_edges, box_i
         intersections = []
+        print(circuit)
         for i,x in enumerate(circuit):
-            if not any(circuit[i-1] in y and x in y for y in poly.circuits(face_index)):
+            rounded_circuits = tuple(tuple(round_point(y) for y in x) for x in poly.circuits(face_index))
+            if not any(round_point(circuit[i-1]) in y and x in y for y in rounded_circuits):
                 continue
             p1 = circuit[i-1]
             p2 = x
@@ -375,7 +377,8 @@ class Box:
                             last_intersections.append(p1)
                         if p2 not in box:
                             last_intersections.append(p2)
-            #print('last intersections', last_intersections)
+            print(p1,p2)
+            print('last intersections', last_intersections)
             if len(last_intersections) == 0:
                 new_edges.add(frozenset([p1,p2]))
             elif len(last_intersections) == 1:
@@ -385,7 +388,7 @@ class Box:
                     if len(frozenset([p2,last_intersections[0][0]])) == 2:
                         new_edges.add(frozenset([p2,last_intersections[0][0]]))
                     if (last_intersections[0][0], True) in intersections:
-                        intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
+                        del intersections[intersections.index((last_intersections[0][0], True))]
                     elif (last_intersections[0][0], False) in intersections:
                         intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
                     elif (last_intersections[0][0], None) in intersections:
@@ -400,8 +403,7 @@ class Box:
                     if (last_intersections[0][0], True) in intersections:
                         intersections[intersections.index((last_intersections[0][0], True))] = last_intersections[0]
                     elif (last_intersections[0][0], False) in intersections:
-                        #intersections[intersections.index((last_intersections[0][0], False))] = last_intersections[0]
-                        pass
+                        del intersections[intersections.index((last_intersections[0][0], False))]
                     elif (last_intersections[0][0], None) in intersections:
                         intersections[intersections.index((last_intersections[0][0], None))] = last_intersections[0]
                     else:
@@ -432,11 +434,11 @@ class Box:
                     #    new_edges.add(frozenset([last_intersections[-1][0],last_intersections[-2][0]]))
                 for intersection in last_intersections:
                     if (intersection[0], True) in intersections:
-                        if intersection[1] is not None:
-                            intersections[intersections.index((intersection[0], True))] = intersection
+                        if intersection[1] is not None and not intersection[1]: 
+                            del intersections[intersections.index((intersection[0], True))]
                     elif (intersection[0], False) in intersections:
-                        if intersection[1] is not None:
-                            intersections[intersections.index((intersection[0], False))] = intersection
+                        if intersection[1] is not None and intersection[1]:
+                            del intersections[intersections.index((intersection[0], False))]
                     elif (intersection[0], None) in intersections:
                         if intersection[1]:
                             intersections[intersections.index((intersection[0], None))] = intersection
@@ -1040,10 +1042,9 @@ class Box:
                             mapping[face_index2].add(face1)
             for face_index2, face2 in enumerate(new_faces):
                 if Box.coplanar({round_point(point) for edge in face1 for point in edge}|{round_point(point) for edge in face2 for point in edge}) and (any(Box.intersect_segments(frozenset([circuit[i-1],x]),y) is not None for i,x in enumerate(circuit) for y in face2 if any(circuit[i-1] in poly.verts and x in poly.verts and circuit[i-1] in z and x in z for z in edges)) or all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit)):
-                    if all(any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit)) for y in {point for edge in face2 for point in edge}) or all(x[0] >= self.x_min and x[0] <= self.x_max and x[1] >= self.y_min and x[1] <= self.y_max and x[2] >= self.z_min and x[2] <= self.z_max for x in circuit):
-                        if face_index2 not in mapping:
-                            mapping[face_index2] = set()
-                        mapping[face_index2].add(face1)
+                    if face_index2 not in mapping:
+                        mapping[face_index2] = set()
+                    mapping[face_index2].add(face1)
         #if not len(mapping) and len(poly.verts):
         #    return poly
         print('mapping')
@@ -1089,6 +1090,7 @@ class Box:
                                 p6 = sorted([(distance(p4,x),x) for x in edge1])[0][1]
                                 new_faces[face_index].add(frozenset([p2,p5]))
                                 new_faces[face_index].add(frozenset([p4,p6]))
+                                print(p2, p5, p4, p6)
                                 break
                             if Box.point_on_segment(edge2, p2) and  Box.point_on_segment(edge1, p3):
                                 new_faces[face_index].remove(edge2)
@@ -1096,6 +1098,7 @@ class Box:
                                 p6 = sorted([(distance(p4,x),x) for x in edge1])[0][1]
                                 new_faces[face_index].add(frozenset([p1,p5]))
                                 new_faces[face_index].add(frozenset([p4,p6]))
+                                print(p1, p5, p4, p6)
                                 break
                             if Box.point_on_segment(edge2, p1) and  Box.point_on_segment(edge1, p4):
                                 new_faces[face_index].remove(edge2)
@@ -1103,6 +1106,7 @@ class Box:
                                 p6 = sorted([(distance(p3,x),x) for x in edge1])[0][1]
                                 new_faces[face_index].add(frozenset([p2,p5]))
                                 new_faces[face_index].add(frozenset([p3,p6]))
+                                print(p2, p5, p3, p6)
                                 break
                             if Box.point_on_segment(edge2, p2) and  Box.point_on_segment(edge1, p4):
                                 new_faces[face_index].remove(edge2)
@@ -1110,6 +1114,7 @@ class Box:
                                 p6 = sorted([(distance(p3,x),x) for x in edge1])[0][1]
                                 new_faces[face_index].add(frozenset([p1,p5]))
                                 new_faces[face_index].add(frozenset([p3,p6]))
+                                print(p1, p5, p3, p6)
                                 break
                     else:
                         new_faces[face_index].add(edge1)
@@ -1117,6 +1122,18 @@ class Box:
         #print('len(new_faces)', [len(x) for x in new_faces]) 
         new_faces = [face for face in new_faces if len(face)]
         faces = [set(face) for face in faces]
+        for face in list(new_faces):
+            circuits = Box.add_circuit_helper(face) 
+            if len(circuits) > 1 and Polyhedron.find_exterior_circuit(circuits) is None:
+                circuits = list(circuits)
+                for circuit in circuits[1:]:
+                    new_faces.append(set())
+                    for i,x in enumerate(circuit):
+                        new_faces[-1].add(frozenset([circuit[i-1],x]))
+                        face.remove(frozenset([circuit[i-1],x]))
+        for face in new_faces:
+            print(face)
+        faces = faces + new_faces
         while True:
             for face in faces:
                 for edge1 in face:
@@ -1149,16 +1166,6 @@ class Box:
                     break
             else:
                 break
-        for face in list(new_faces):
-            circuits = Box.add_circuit_helper(face) 
-            if len(circuits) > 1 and Polyhedron.find_exterior_circuit(circuits) is None:
-                circuits = list(circuits)
-                for circuit in circuits[1:]:
-                    new_faces.append(set())
-                    for i,x in enumerate(circuit):
-                        new_faces[-1].add(frozenset([circuit[i-1],x]))
-                        face.remove(frozenset([circuit[i-1],x]))
-        faces = faces + new_faces
         faces = [frozenset(face) for face in faces]
         verts = list(set(tuple(float(x) for x in point) for face in faces for edge in face for point in edge))
         edges = list(set(edge for face in faces for edge in face))
@@ -1168,6 +1175,7 @@ class Box:
         new_poly.verts = verts
         new_poly.edges = edges
         new_poly.faces = faces
+        '''
         while True:
             double_break = False
             for i,x in enumerate(new_poly.verts):
@@ -1211,6 +1219,7 @@ class Box:
                     break
             else:
                 break
+        '''
         #new_poly.verts = [round_point(x) for x in new_poly.verts]
         #for face_index, face in enumerate(new_poly.faces):
         #    print(face_index, face, set(frozenset(verts[y] for y in edges[x]) for x in face))
@@ -1777,7 +1786,7 @@ class Polyhedron:
             output[-1] = list(output[-1])
             i = 1
             while i < len(output[-1])+1:
-                if output[-1][i%len(output[-1])] == output[-1][i-1]:
+                if round_point(output[-1][i%len(output[-1])]) == round_point(output[-1][i-1]):
                     del output[-1][i%len(output[-1])]
                 else:
                     i += 1
@@ -1964,6 +1973,7 @@ class Block:
             color = "white"
             pygame.draw.polygon(screen, color, points)
         '''
+        '''
         #print('face drawing time', time.time()-start_time)
         min_select = tuple(min(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
         max_select = tuple(max(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
@@ -2050,25 +2060,6 @@ class Block:
                         if (x[d2],x[d3]) < (point[d2],point[d3]):
                             point = x
                     path = []
-                    '''
-                    while True:
-                        triple_break = False
-                        for x in point_set:
-                            for y in point_set:
-                                if x != y:
-                                    for z in point_set:
-                                        if x != z and y != z:
-                                            if Box.colinear({x,y,z}):
-                                                point_set.remove(sorted([(distance(x,y),z), (distance(x,z),y), (distance(y,z),x)])[-1][1])
-                                                triple_break = True
-                                                break
-                                if triple_break:
-                                    break
-                            if triple_break:
-                                break
-                        else:
-                            break
-                    '''
                     point_list = list(point_set)
                     rotated_point_mapping = {x:x for x in point_list}
                     reverse_point_mapping = {rotated_point_mapping[key]:key for key in rotated_point_mapping}
@@ -2103,6 +2094,7 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
+        '''
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
             #print(p1,p2)
@@ -2680,17 +2672,7 @@ if __name__ == "__main__":
                                 else:
                                     block.select[index] += block.unit
                                     block.select_size[index] -= block.unit
-                        elif block.select[3] == 1:
-                            block.select_size[1] += direction*block.unit
-                            if block.select_size[1] == 0:
-                                block.select_size[1] = direction*block.unit
-                                if block.select_size[1] == block.unit:
-                                    block.select[1] -= block.unit
-                                    block.select_size[1] += block.unit
-                                else:
-                                    block.select[1] += block.unit
-                                    block.select_size[1] -= block.unit
-                        elif block.select[3] == 2:
+                        elif block.select[3] == 1 or block.select[3] == 2:
                             block.select_size[1] += direction*block.unit
                             if block.select_size[1] == 0:
                                 block.select_size[1] = direction*block.unit
