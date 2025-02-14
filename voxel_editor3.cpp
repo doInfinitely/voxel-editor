@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <chrono>
+#include <queue>
 
 using namespace Eigen;
 using namespace std;
@@ -2961,6 +2962,113 @@ class Block {
                 points_2D.back()[1] = points_2D.back()[1]*-1+SCREEN_HEIGHT/2; 
             }
             fill_polygon(gRenderer, points_2D);
+        }
+        std::array<double,3> min_select;
+        std::array<double,3> max_select;
+        for (int i = 0; i < 3; i++) {
+            min_select[i] = min(select[i],select[i]+select_size[i]);
+            max_select[i] = max(select[i],select[i]+select_size[i]);
+        }
+        double meter = 1;
+        for (const double& x : meters) {
+            meter *= x;
+        }
+        for (int d1 = 0; d1 < 3; d1++) {
+            for (const int& mult : {1,-1}) {
+                int d2;
+                int d3;
+                if (d1 == 0) {
+                    d2 = 1;
+                    d3 = 2;
+                }
+                if (d1 == 1) {
+                    d2 = 0;
+                    d3 = 2;
+                }
+                if (d1 == 2) {
+                    d2 = 0;
+                    d3 = 1;
+                }
+                vector<vector<std::array<double,3>>> points;
+                for (int i = 0; i < (int)abs(select_size[d2]/meter); i++) {
+                    points.push_back(vector<std::array<double,3>>());
+                    for (int j = 0; j < (int)abs(select_size[d3]/meter); j++) {
+                        std::array<double,3> point;
+                        point[d2] = min_select[d2] + meter*(i+.5);
+                        point[d3] = min_select[d3] + meter*(j+.5);
+                        point[d1] = mult*std::numeric_limits<double>::infinity();
+                        points[i].push_back(point);
+                    }
+                }
+                for (int face_index = 0; face_index < poly.faces.size(); face_index++) {
+                    vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(poly.circuits(face_index));
+                    if (circuit[0][d1] == circuit[1][d1] && circuit[1][d1] == circuit[2][d1]) {
+                        for (vector<std::array<double,3>>& point_row : points) {
+                            for (std::array<double,3>& point : point_row) {
+                                std::array<double,3> projection;
+                                projection[d2] = point[d2];
+                                projection[d3] = point[d3];
+                                projection[d1] = (*circuit)[0][d1];
+                                std::array<double,3> sel;
+                                if (mult == 1) {
+                                    sel = max_select;
+                                } else {
+                                    sel = min_select;
+                                }
+                                bool any = false;
+                                for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
+                                    if (Polyhedron::inside_triangle(triangle,projection)) {
+                                        any = true;
+                                        break;
+                                    }
+                                }
+                                if (mult*(*circuit)[0][d1] < mult*point[d1] && mult*(*circuit)[0][d1] >= mult*sel[d1] && any) {
+                                    point[d1] = (*circuit)[0][d1];
+                                }
+                            }
+                        }
+                    }
+                }
+                set<std::array<int,2>> seen;
+                vector<set<std::array<int,2>>> components;
+                for (int i = 0; i < points.size(); i++) {
+                    for (int j = 0; j < points[i].size(); j++) {
+                        if (seen.find({i,j}) != seen.end()) {
+                            continue;
+                        }
+                        if (points[i][j][d1] == mult*std::numeric_limits<double>::infinity()) {
+                            continue;
+                        }
+                        set<std::array<int,2>> component = {{i,j}};
+                        seen.insert({i,j});
+                        queue<std::array<int,2>> q;
+                        q.push({i-1,j});
+                        q.push({i,j-1});
+                        q.push({i+1,j});
+                        q.push({i,j+1});
+                        while (!q.empty()) {
+                            if (seen.find(q.front()) != seen.end()) {
+                                q.pop();
+                                continue;
+                            }
+                            if (q.front()[0] >= 0 && q.front()[0] < points.size() && q.front()[1] >= 0 && q.front()[1] < points[q.front()[0]].size() && points[i][j][d1] == points[k][l][d1]) {
+                                component.insert(q.front());
+                                seen.insert(q.front());
+                                q.push({q.front()[0]-1,q.front()[1]});
+                                q.push({q.front()[0],q.front()[1]-1});
+                                q.push({q.front()[0]+1,q.front()[1]});
+                                q.push({q.front()[0],q.front()[1]+1});
+                            }
+                            q.pop()
+                        }
+                        components.push_back(component);
+                    }
+                }
+                for (const set<std::array<int,2>>& component : components) {
+                    set<std::array<int,3>> point_set;
+                    
+                }
+            }
         }
         SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
         for (const set<int>& edge : poly.edges) {

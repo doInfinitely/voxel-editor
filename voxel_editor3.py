@@ -1973,10 +1973,9 @@ class Block:
             color = "white"
             pygame.draw.polygon(screen, color, points)
         '''
-        '''
         #print('face drawing time', time.time()-start_time)
-        min_select = tuple(min(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
-        max_select = tuple(max(block.select[i],block.select[i]+block.select_size[i]) for i in range(3))
+        min_select = tuple(min(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
+        max_select = tuple(max(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
         meter = 1
         for x in self.meters:
             meter *= x
@@ -1984,10 +1983,16 @@ class Block:
             for mult in [1,-1]:
                 d2, d3 = [i for i in range(3) if i != d1]
                 points = [[[0 for i in range(3)] for j in range(abs(int(self.select_size[d3]/meter)))] for k in range(abs(int(self.select_size[d2]/meter)))]
+                if mult == 1:
+                    select1 = max_select
+                    select2 = min_select
+                else:
+                    select1 = min_select
+                    select2 = max_select
                 for i in range(len(points)):
                     for j in range(len(points[i])):
-                        points[i][j][d2] = min_select[d2] + meter*(i+.5)
-                        points[i][j][d3] = min_select[d3] + meter*(j+.5)
+                        points[i][j][d2] = select2[d2] + mult*meter*(i+.5)
+                        points[i][j][d3] = select2[d3] + mult*meter*(j+.5)
                         points[i][j][d1] = mult*float('inf')
                 for face_index,face in enumerate(self.poly.faces):
                     circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
@@ -1997,12 +2002,10 @@ class Block:
                                 projection = list(point)
                                 projection[d1] = circuit[0][d1]
                                 projection = tuple(projection)
-                                if mult == 1:
-                                    select = max_select
-                                else:
-                                    select = min_select
-                                if mult*circuit[0][d1] < mult*point[d1] and mult*circuit[0][d1] >= mult*select[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
-                                   point[d1] = circuit[0][d1]
+                                if mult*circuit[0][d1] < mult*point[d1] and mult*circuit[0][d1] >= mult*select1[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
+                                    print(Polyhedron.triangulate(circuit))
+                                    point[d1] = circuit[0][d1]
+                print(d1, points)
                 seen = set()
                 components = []
                 for i in range(len(points)):
@@ -2033,26 +2036,26 @@ class Block:
                             if (i,j) in component:
                                 if (i-1,j) not in component or (i,j-1) not in component or (i-1,j-1) not in component:
                                     point = list(points[i][j])
-                                    point[d2] = min_select[d2] + i*meter
-                                    point[d3] = min_select[d3] + j*meter
+                                    point[d2] = select2[d2] + mult*i*meter
+                                    point[d3] = select2[d3] + mult*j*meter
                                     point = tuple(point)
                                     point_set.add(point)
                                 if (i-1,j) not in component or (i,j+1) not in component or (i-1,j+1) not in component:
                                     point = list(points[i][j])
-                                    point[d2] = min_select[d2] + i*meter
-                                    point[d3] = min_select[d3] + (j+1)*meter
+                                    point[d2] = select2[d2] + mult*i*meter
+                                    point[d3] = select2[d3] + mult*(j+1)*meter
                                     point = tuple(point)
                                     point_set.add(point)
                                 if (i+1,j) not in component or (i,j-1) not in component or (i+1,j-1) not in component:
                                     point = list(points[i][j])
-                                    point[d2] = min_select[d2] + (i+1)*meter
-                                    point[d3] = min_select[d3] + j*meter
+                                    point[d2] = select2[d2] + mult*(i+1)*meter
+                                    point[d3] = select2[d3] + mult*j*meter
                                     point = tuple(point)
                                     point_set.add(point)
                                 if (i+1,j) not in component or (i,j+1) not in component or (i+1,j+1) not in component:
                                     point = list(points[i][j])
-                                    point[d2] = min_select[d2] + (i+1)*meter
-                                    point[d3] = min_select[d3] + (j+1)*meter
+                                    point[d2] = select2[d2] + mult*(i+1)*meter
+                                    point[d3] = select2[d3] + mult*(j+1)*meter
                                     point = tuple(point)
                                     point_set.add(point)
                     point = tuple(float('inf') for i in range(3))
@@ -2094,7 +2097,6 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
-        '''
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
             #print(p1,p2)
