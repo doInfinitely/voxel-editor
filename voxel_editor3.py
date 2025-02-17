@@ -232,11 +232,13 @@ class Box:
             circuit = Polyhedron.circuit_cut(circuits)
             interior_circuits = circuits - set([Polyhedron.find_exterior_circuit(circuits)])
             if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
+                print(Polyhedron.triangulate(circuit))
                 return True
             if circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] > point[2]:
                 projection = (point[0],point[1],circuit[0][2])
                 if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)) and not any(Polyhedron.inside_triangle(y,projection) for x in interior_circuits for y in Polyhedron.triangulate(x)):
-                    #print('inside_polyhedron', circuit, interior_circuits)
+                    print('inside_polyhedron', circuit, interior_circuits)
+                    print(Polyhedron.triangulate(circuit))
                     intersections += 1
                 if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
                     return True
@@ -370,7 +372,7 @@ class Box:
                     intersection = Box.intersect_segments(frozenset([p1,p2]),frozenset([box[j-1],box_point]))
                     #print("intersection", intersection, p1, p2)
                     if intersection is not None:
-                        last_intersections.append(intersection)
+                        last_intersections.append(round_point(intersection))
                 else:
                     if Box.point_on_segment(frozenset([box[j-1],box_point]),p1) and Box.point_on_segment(frozenset([box[j-1],box_point]),p2):
                         if p1 not in box:
@@ -444,7 +446,7 @@ class Box:
                             intersections[intersections.index((intersection[0], None))] = intersection
                     else:
                         intersections.append(intersection)
-        #print('WHO',new_edges)
+        print('WHO',new_edges)
         f = {frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face}
         for box_index, box_point in enumerate(box):
             edge1 = frozenset([box[box_index-1],box_point])
@@ -486,6 +488,24 @@ class Box:
                     if Box.point_on_segment(round_edge(frozenset([box[j-1],box[j]])), round_point(intersection[0])) and round_point(box[j-1]) != round_point(intersection[0]) and round_point(box[j]) != round_point(intersection[0]):
                         box.insert(j,intersection[0])
                         break
+            components = [{round_edge(edge)} for edge in new_edges]
+            while True:
+                double_break = False
+                for i,x in enumerate(components):
+                    for j,y in enumerate(components):
+                        if i < j and any(len(edge1&edge2) for edge1 in x for edge2 in y):
+                            x |= y
+                            del components[j]
+                            double_break = True
+                            break
+                    if double_break:
+                        break
+                else:
+                    break
+            print("components", len(components))         
+            components = [{point for edge in x for point in edge} for x in components]
+            print(components)
+            component_lookup = {y:frozenset(x) for x in components for y in x}
             for i, intersection in enumerate(intersections):
                 try:
                     index = box.index(intersection[0])
@@ -535,6 +555,22 @@ class Box:
                 print("path2",path2,inside3,inside4)
                 is_border_path1 = inside1 is not None and inside2 is not None and not inside1 and inside2
                 is_border_path2 = inside3 is not None and inside4 is not None and not inside3 and inside4
+                comps = set()
+                for x in path1:
+                    try:
+                        comps.add(component_lookup[round_point(x)])
+                    except KeyError:
+                        pass
+                if len(comps) > 1:
+                    is_border_path1 = False
+                comps = set()
+                for x in path2:
+                    try:
+                        comps.add(component_lookup[round_point(x)])
+                    except KeyError:
+                        pass
+                if len(comps) > 1:
+                    is_border_path2 = False
                 if path1[-1] == path2[-1] and is_border_path1 and is_border_path2:
                     distance1 = sum(distance(path1[i-1],x) for i,x in enumerate(path1) if i > 0)
                     distance2 = sum(distance(path2[i-1],x) for i,x in enumerate(path2) if i > 0)
@@ -706,11 +742,11 @@ class Box:
         box_faces.extend([{(x,y,z) for y in (self.y_min,self.y_max) for z in (self.z_min,self.z_max)} for x in (self.x_min,self.x_max)])
         box_faces.extend([{(x,y,z) for x in (self.x_min,self.x_max) for z in (self.z_min,self.z_max)} for y in (self.y_min,self.y_max)])
         box_faces.extend([{(x,y,z) for x in (self.x_min,self.x_max) for y in (self.y_min,self.y_max)} for z in (self.z_min,self.z_max)])
+        print('inside!', Box.inside_polyhedron(poly, ((self.x_min+self.x_max)/2,(self.y_min+self.y_max)/2,(self.z_min+self.z_max)/2)))
         if not Box.inside_polyhedron(poly, ((self.x_min+self.x_max)/2,(self.y_min+self.y_max)/2,(self.z_min+self.z_max)/2)):
             for edge in poly.edges:
                 edge = frozenset(poly.verts[index] for index in edge)
                 if self.intersect(edge) and not any(all(Box.colinear(frozenset([(x1,y1,z1),(x2,y2,z2)])|frozenset([point])) for point in edge) for x1 in (self.x_min,self.x_max) for y1 in (self.y_min,self.y_max) for z1 in (self.z_min,self.z_max) for x2 in (self.x_min,self.x_max) for y2 in (self.y_min,self.y_max) for z2 in (self.z_min,self.z_max) if sum([x1 != x2,y1 != y2, z1 != z2]) == 1) and not any(Box.coplanar(edge|x) for x in box_faces):
-                    print('intersect', edge)
                     triple_break = False
                     for p1 in [x for x in edge if self.x_min <= x[0] and x[0] <= self.x_max and self.y_min <= x[1] and x[1] <= self.y_max and self.z_min <= x[2] and x[2] <= self.z_max]:
                         p2 = list(edge-frozenset([p1]))[0]
@@ -870,6 +906,17 @@ class Box:
                     break
             else:
                 break
+        for face in list(faces):
+            circuits = Box.delete_circuit_helper({round_edge(x) for x in face}) 
+            if len(circuits) > 1 and Polyhedron.find_exterior_circuit(circuits) is None:
+                circuits = list(circuits)
+                for circuit in circuits[1:]:
+                    faces.append(set())
+                    for i,x in enumerate(circuit):
+                        faces[-1].add(frozenset([circuit[i-1],x]))
+                        face.remove(frozenset([circuit[i-1],x]))
+                    print("FACES -1", faces[-1])
+                    print(face)
         faces = [face for face in faces if len(face)]
         verts = list(set(point for face in faces for edge in face for point in edge))
         edges = list(set(frozenset(point for point in edge) for face in faces for edge in face))
@@ -1049,8 +1096,9 @@ class Box:
         #    return poly
         print('mapping')
         for key in mapping:
-            print(new_faces[key])
-            print(key, mapping[key])
+            print(new_faces[key], key)
+            for x in mapping[key]:
+                print(x)
         for face_index in mapping:
             for face2 in mapping[face_index]:
                 for edge1 in face2:
@@ -1082,6 +1130,10 @@ class Box:
                                 new_faces[face_index].add(frozenset(edge3))
                             break
                         if Box.colinear(edge1|edge2):
+                            if len(edge1&edge2) == 1:
+                                new_faces[face_index].remove(edge2)
+                                new_faces[face_index].add(edge1^edge2)
+                                break
                             p1, p2 = edge1
                             p3, p4 = edge2
                             if Box.point_on_segment(edge2, p1) and Box.point_on_segment(edge1, p3):
@@ -1678,34 +1730,106 @@ class Polyhedron:
             cross_product_dot_normal.append(dot(Polyhedron.cross_product_triplet(circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]),normal))
         signs = [copysign(1,x) for x in cross_product_dot_normal]
         return [x==signs[i-1] or x == signs[(i+1)%len(signs)] for i,x in enumerate(signs)]
-
-
+    
+    def clockwise_angles(planar):
+        output = []
+        temp = []
+        for i in range(len(planar)):
+            planar = [tuple(y[j]-planar[i][j] for j in range(3)) for y in planar]
+            angle = (0,0,-math.atan2(planar[i][1]-planar[i-1][1],planar[i][0]-planar[i-1][0]))
+            planar = rotate(planar, angle)
+            theta = math.atan2(planar[(i+1)%len(planar)][1],planar[(i+1)%len(planar)][0])
+            output.append(theta < 0)
+            print(planar, theta/math.pi*180)
+            temp.append(math.acos(dot(planar[i-1],planar[(i+1)%len(planar)])/distance((0,0,0), planar[i-1])/distance((0,0,0),planar[(i+1)%len(planar)]))/math.pi*180)
+        print(temp)
+        return output
+        
     # A circuit is a representation of a Jordan Polygon
     def clip_ear(circuit):
-        is_convex = Polyhedron.convex_angles(circuit)
-        #print(circuit, is_convex)
-        for is_convex in [is_convex, [not x for x in is_convex]]:
-            for i in range(len(circuit)):
-                if is_convex[i]:
-                    for j,y in enumerate(circuit):
-                        if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
-                            if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and y not in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]:
-                                #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
-                                break
-                    else:
-                        remainder = [x for k,x in enumerate(circuit) if k != i]
-                        remainder = tuple([x for k,x in enumerate(remainder) if x != remainder[k-1]])
-                        return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), remainder
+        planar = Polyhedron.make_planar(circuit)
+        if not Polyhedron.is_clockwise(planar):
+            planar = tuple(reversed(planar))
+            circuit = tuple(reversed(circuit))
+        #print("clockwise_angles")
+        is_convex = Polyhedron.clockwise_angles(planar)
+        print(circuit, is_convex)
+        #print(tuple(reversed(circuit)), Polyhedron.clockwise_angles(tuple(reversed(circuit))))
+        for i in range(len(circuit)):
+            if is_convex[i]:
+                for j,y in enumerate(circuit):
+                    if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
+                        if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and round_point(y) not in [round_point(z) for z in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]]:
+                            #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
+                            break
+                else:
+                    remainder = [x for k,x in enumerate(circuit) if k != i]
+                    remainder = tuple([x for k,x in enumerate(remainder) if x != remainder[k-1]])
+                    return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), remainder
+        '''
+        circuit = tuple(reversed(circuit))
+        is_convex = [not x for x in is_convex]
+        for i in range(len(circuit)):
+            if is_convex[i]:
+                for j,y in enumerate(circuit):
+                    if j != i and j != (i+1)%len(circuit) and j != (i-1)%len(circuit):
+                        if Polyhedron.inside_triangle([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y) and round_point(y) not in [round_point(z) for z in [circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]]:
+                            #print([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]],y)
+                            break
+                else:
+                    remainder = [x for k,x in enumerate(circuit) if k != i]
+                    remainder = tuple([x for k,x in enumerate(remainder) if x != remainder[k-1]])
+                    return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), remainder
+        '''
+    def make_planar(circuit):
+        output = []
+        p1 = (distance(circuit[0],circuit[1]),0,0)
+        angle = [0,0, math.asin((circuit[1][1]-circuit[0][1])/p1[0])]
+        p1 = rotate([p1], angle)[0]
+        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
+        angle[1] = math.asin((circuit[1][2]-circuit[0][2])/p1[0])
+        p1 = rotate([p1], (0,angle[1],0))[0]
+        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
+        angle = [-x for x in angle]
+        p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0]
+        #p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], (0,0,angle[2]))[0]
+        #p2 = rotate([p2], (0,angle[1],0))[0]
+        #print(p2, rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0])
+        angle[0] = -math.atan2(-p2[2],p2[1])
+        #print(angle)
+        #p2 = rotate([p2], (angle[0],0,0))[0]
+        #print(p2, tuple(circuit[2][i]-circuit[0][i] for i in range(3)))
+        #print(rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], angle))
+        temp = rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], (0,angle[1],angle[2]))
+        temp = rotate(temp, (angle[0],0,0))
+        #print(temp)
+        return tuple((y[0],y[1],0) for y in temp)
+    def is_clockwise(planar):
+        summa = 0
+        #print(planar) 
+        for i in range(len(planar)):
+            planar = [tuple(y[j]-planar[i][j] for j in range(3)) for y in planar]
+            angle = (0,0,-math.atan2(planar[i][1]-planar[i-1][1],planar[i][0]-planar[i-1][0]))
+            planar = rotate(planar, angle)
+            theta = math.atan2(planar[(i+1)%len(planar)][1],planar[(i+1)%len(planar)][0])
+            summa += theta
+        #print(summa)
+        return summa < 0
+    def make_clockwise(circuits):
+        return tuple(x if Polyhedron.is_clockwise(Polyhedron.make_planar(x)) else tuple(reversed(x)) for x in circuits)
     def triangulate(circuit):
         #print(circuit)
         output = []
         remainder = circuit
         while len(remainder) > 3:
             ear, remainder = Polyhedron.clip_ear(remainder)
+            #print("ear",ear)
             output.append(ear)
         output.append(remainder)
+        #print("ears", output)
         return output
     def find_exterior_circuit(circuits):
+        #print(circuits)
         circuits_list = list(circuits)
         for i,x in enumerate(circuits_list):
             triangulation = Polyhedron.triangulate(x)
@@ -1713,6 +1837,7 @@ class Polyhedron:
                 if j != i:
                     double_break = False
                     for point in y:
+                        print(triangulation)
                         if not any(Polyhedron.inside_triangle(z,point) for z in triangulation):
                             double_break = True
                             break
@@ -1760,7 +1885,7 @@ class Polyhedron:
                 double_break = False
                 for y in output[-1]:
                     segment = (x,y)
-                    if not len(Polyhedron.circuit_intersect(segment, output[:-1])):
+                    if not len(Polyhedron.circuit_intersect(segment, output[1:-1])):
                         double_break = True
                         break
                 if double_break:
@@ -1781,7 +1906,14 @@ class Polyhedron:
             for j,y in enumerate(last_interior_intersection[3]):
                 if y in last_interior_intersection[2] and last_interior_intersection[3][j-1] in last_interior_intersection[2]:
                     break
-            output[-1] = output[-1][:i] + tuple([first_exterior_intersection[1], last_interior_intersection[1]]) + tuple(reversed(last_interior_intersection[3][:j])) + tuple(reversed(last_interior_intersection[3][j:])) + tuple([last_interior_intersection[1], first_exterior_intersection[1]]) + output[-1][i:]
+            #print("circuit_cut")
+            #print(output[-1][:i])
+            #print(tuple([first_exterior_intersection[1], last_interior_intersection[1]]))
+            #print(tuple(reversed(last_interior_intersection[3][:j])))
+            #print(tuple(reversed(last_interior_intersection[3][j:])))
+            #print(tuple([last_interior_intersection[1], first_exterior_intersection[1]]))
+            #print(output[-1][i:])
+            output[-1] = output[-1][:i] + tuple([first_exterior_intersection[1], last_interior_intersection[1]]) + last_interior_intersection[3][j:] + last_interior_intersection[3][:j] + tuple([last_interior_intersection[1], first_exterior_intersection[1]]) + output[-1][i:]
             output.remove(last_interior_intersection[3])
             output[-1] = list(output[-1])
             i = 1
@@ -1791,6 +1923,8 @@ class Polyhedron:
                 else:
                     i += 1
             output[-1] = tuple(output[-1])
+            #print(output[0])
+            #print("end circuit_cut")
         return output[0]
     def is_inside(self, point):
         #print('is_inside', point)
@@ -1973,6 +2107,7 @@ class Block:
             color = "white"
             pygame.draw.polygon(screen, color, points)
         '''
+        '''
         #print('face drawing time', time.time()-start_time)
         min_select = tuple(min(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
         max_select = tuple(max(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
@@ -1995,7 +2130,7 @@ class Block:
                         points[i][j][d3] = select2[d3] + mult*meter*(j+.5)
                         points[i][j][d1] = mult*float('inf')
                 for face_index,face in enumerate(self.poly.faces):
-                    circuit = Polyhedron.circuit_cut(self.poly.circuits(face_index))
+                    circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.poly.circuits(face_index)))
                     if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1]:
                         for point_row in points:
                             for point in point_row:
@@ -2005,7 +2140,7 @@ class Block:
                                 if mult*circuit[0][d1] < mult*point[d1] and mult*circuit[0][d1] >= mult*select1[d1] and any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
                                     print(Polyhedron.triangulate(circuit))
                                     point[d1] = circuit[0][d1]
-                print(d1, points)
+                #print(d1, points)
                 seen = set()
                 components = []
                 for i in range(len(points)):
@@ -2097,6 +2232,7 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
+        '''
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
             #print(p1,p2)

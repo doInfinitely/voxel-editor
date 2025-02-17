@@ -1541,11 +1541,12 @@ class Box {
                     for (int j = 1; j < path2.size(); j++) {
                         distance2 += Polyhedron::distance(path2[j-1],path2[j]);
                     }
-                    if (distance2 > distance1) {
+                    /*if (distance2 > distance1) {
                         is_border_path1 = false;
                     } else {
                         is_border_path2 = false;
-                    }
+                    }*/
+                    is_border_path2 = false;
                 }
                 std::array<vector<std::array<double,3>>,2> paths = {path1,path2};
                 std::array<bool,2> is_border_path = {is_border_path1, is_border_path2};
@@ -2048,6 +2049,7 @@ class Box {
                 }
             }
         }
+        /*
         set<vector<std::array<double,3>>> circuits = Box::del_circuit_helper(path_edges);
         for (const vector<std::array<double,3>>& circuit : circuits) {
             bool no_break = true;
@@ -2094,7 +2096,7 @@ class Box {
                 }
                 faces.push_back(new_face);
             }
-        }
+        }*/
         while (true) {
             bool triple_break = false;
             for (set<set<std::array<double,3>>>& face : faces) {
@@ -2963,6 +2965,7 @@ class Block {
             }
             fill_polygon(gRenderer, points_2D);
         }
+        /*
         std::array<double,3> min_select;
         std::array<double,3> max_select;
         for (int i = 0; i < 3; i++) {
@@ -3066,10 +3069,18 @@ class Block {
                 }
                 for (const set<std::array<int,2>>& component : components) {
                     set<std::array<int,3>> point_set;
-                    
+                    for (int i = 0; i < points.size(); i++) {
+                        for (int j = 0; j < points[i].size(); j++) {
+                            if (component.find({i,j} != component.end()) {
+                                if (component.find({i-1,j} == component.end() || component.find({i,j-1} == component.end() || component.find({i-1,j-1} == component.end()) {
+                                    std::array
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
+        }*/
         SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
         for (const set<int>& edge : poly.edges) {
             std::array<double,2> p1 = camera.project(poly.verts[*(edge.begin())]);
