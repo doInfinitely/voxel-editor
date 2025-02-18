@@ -230,14 +230,12 @@ class Box:
         for face_index,face in enumerate(poly.faces):
             circuits = poly.circuits(face_index)
             circuit = Polyhedron.circuit_cut(circuits)
-            interior_circuits = circuits - set([Polyhedron.find_exterior_circuit(circuits)])
             if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
                 print(Polyhedron.triangulate(circuit))
                 return True
             if circuit[0][2] == circuit[1][2] and circuit[0][2] == circuit[2][2] and circuit[0][2] > point[2]:
                 projection = (point[0],point[1],circuit[0][2])
-                if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)) and not any(Polyhedron.inside_triangle(y,projection) for x in interior_circuits for y in Polyhedron.triangulate(x)):
-                    print('inside_polyhedron', circuit, interior_circuits)
+                if any(Polyhedron.inside_triangle(x,projection) for x in Polyhedron.triangulate(circuit)):
                     print(Polyhedron.triangulate(circuit))
                     intersections += 1
                 if any(Polyhedron.inside_triangle(x,point) for x in Polyhedron.triangulate(circuit)):
@@ -907,7 +905,7 @@ class Box:
             else:
                 break
         for face in list(faces):
-            circuits = Box.delete_circuit_helper({round_edge(x) for x in face}) 
+            circuits = Box.delete_circuit_helper(face) 
             if len(circuits) > 1 and Polyhedron.find_exterior_circuit(circuits) is None:
                 circuits = list(circuits)
                 for circuit in circuits[1:]:
@@ -1130,10 +1128,6 @@ class Box:
                                 new_faces[face_index].add(frozenset(edge3))
                             break
                         if Box.colinear(edge1|edge2):
-                            if len(edge1&edge2) == 1:
-                                new_faces[face_index].remove(edge2)
-                                new_faces[face_index].add(edge1^edge2)
-                                break
                             p1, p2 = edge1
                             p3, p4 = edge2
                             if Box.point_on_segment(edge2, p1) and Box.point_on_segment(edge1, p3):
@@ -1733,7 +1727,7 @@ class Polyhedron:
     
     def clockwise_angles(planar):
         output = []
-        temp = []
+        #temp = []
         for i in range(len(planar)):
             planar = [tuple(y[j]-planar[i][j] for j in range(3)) for y in planar]
             angle = (0,0,-math.atan2(planar[i][1]-planar[i-1][1],planar[i][0]-planar[i-1][0]))
@@ -1741,9 +1735,44 @@ class Polyhedron:
             theta = math.atan2(planar[(i+1)%len(planar)][1],planar[(i+1)%len(planar)][0])
             output.append(theta < 0)
             print(planar, theta/math.pi*180)
-            temp.append(math.acos(dot(planar[i-1],planar[(i+1)%len(planar)])/distance((0,0,0), planar[i-1])/distance((0,0,0),planar[(i+1)%len(planar)]))/math.pi*180)
-        print(temp)
+            #temp.append(math.acos(dot(planar[i-1],planar[(i+1)%len(planar)])/distance((0,0,0), planar[i-1])/distance((0,0,0),planar[(i+1)%len(planar)]))/math.pi*180)
+        #print(temp)
         return output
+    def make_planar(circuit):
+        p1 = (distance(circuit[0],circuit[1]),0,0)
+        angle = [0,0, math.asin((circuit[1][1]-circuit[0][1])/p1[0])]
+        p1 = rotate([p1], angle)[0]
+        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
+        angle[1] = math.asin((circuit[1][2]-circuit[0][2])/p1[0])
+        p1 = rotate([p1], (0,angle[1],0))[0]
+        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
+        angle = [-x for x in angle]
+        p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0]
+        #p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], (0,0,angle[2]))[0]
+        #p2 = rotate([p2], (0,angle[1],0))[0]
+        #print(p2, rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0])
+        angle[0] = -math.atan2(-p2[2],p2[1])
+        #print(angle)
+        #p2 = rotate([p2], (angle[0],0,0))[0]
+        #print(p2, tuple(circuit[2][i]-circuit[0][i] for i in range(3)))
+        #print(rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], angle))
+        output = rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], (0,angle[1],angle[2]))
+        output = rotate(output, (angle[0],0,0))
+        #print(temp)
+        return tuple((y[0],y[1],0) for y in output)
+    def is_clockwise(planar):
+        summa = 0
+        #print(planar) 
+        for i in range(len(planar)):
+            planar = [tuple(y[j]-planar[i][j] for j in range(3)) for y in planar]
+            angle = (0,0,-math.atan2(planar[i][1]-planar[i-1][1],planar[i][0]-planar[i-1][0]))
+            planar = rotate(planar, angle)
+            theta = math.atan2(planar[(i+1)%len(planar)][1],planar[(i+1)%len(planar)][0])
+            summa += theta
+        #print(summa)
+        return summa < 0
+    def make_clockwise(circuits):
+        return tuple(x if Polyhedron.is_clockwise(Polyhedron.make_planar(x)) else tuple(reversed(x)) for x in circuits)
         
     # A circuit is a representation of a Jordan Polygon
     def clip_ear(circuit):
@@ -1781,42 +1810,6 @@ class Polyhedron:
                     remainder = tuple([x for k,x in enumerate(remainder) if x != remainder[k-1]])
                     return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), remainder
         '''
-    def make_planar(circuit):
-        output = []
-        p1 = (distance(circuit[0],circuit[1]),0,0)
-        angle = [0,0, math.asin((circuit[1][1]-circuit[0][1])/p1[0])]
-        p1 = rotate([p1], angle)[0]
-        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
-        angle[1] = math.asin((circuit[1][2]-circuit[0][2])/p1[0])
-        p1 = rotate([p1], (0,angle[1],0))[0]
-        #print(p1,tuple(circuit[1][i]-circuit[0][i] for i in range(3)))
-        angle = [-x for x in angle]
-        p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0]
-        #p2 = rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], (0,0,angle[2]))[0]
-        #p2 = rotate([p2], (0,angle[1],0))[0]
-        #print(p2, rotate([tuple(circuit[2][i]-circuit[0][i] for i in range(3))], angle)[0])
-        angle[0] = -math.atan2(-p2[2],p2[1])
-        #print(angle)
-        #p2 = rotate([p2], (angle[0],0,0))[0]
-        #print(p2, tuple(circuit[2][i]-circuit[0][i] for i in range(3)))
-        #print(rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], angle))
-        temp = rotate([tuple(x[i]-circuit[0][i] for i in range(3)) for x in circuit], (0,angle[1],angle[2]))
-        temp = rotate(temp, (angle[0],0,0))
-        #print(temp)
-        return tuple((y[0],y[1],0) for y in temp)
-    def is_clockwise(planar):
-        summa = 0
-        #print(planar) 
-        for i in range(len(planar)):
-            planar = [tuple(y[j]-planar[i][j] for j in range(3)) for y in planar]
-            angle = (0,0,-math.atan2(planar[i][1]-planar[i-1][1],planar[i][0]-planar[i-1][0]))
-            planar = rotate(planar, angle)
-            theta = math.atan2(planar[(i+1)%len(planar)][1],planar[(i+1)%len(planar)][0])
-            summa += theta
-        #print(summa)
-        return summa < 0
-    def make_clockwise(circuits):
-        return tuple(x if Polyhedron.is_clockwise(Polyhedron.make_planar(x)) else tuple(reversed(x)) for x in circuits)
     def triangulate(circuit):
         #print(circuit)
         output = []
@@ -2107,7 +2100,6 @@ class Block:
             color = "white"
             pygame.draw.polygon(screen, color, points)
         '''
-        '''
         #print('face drawing time', time.time()-start_time)
         min_select = tuple(min(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
         max_select = tuple(max(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
@@ -2198,8 +2190,7 @@ class Block:
                         if (x[d2],x[d3]) < (point[d2],point[d3]):
                             point = x
                     path = []
-                    point_list = list(point_set)
-                    rotated_point_mapping = {x:x for x in point_list}
+                    rotated_point_mapping = {x:x for x in point_set}
                     reverse_point_mapping = {rotated_point_mapping[key]:key for key in rotated_point_mapping}
                     angle = [0,0,0]
                     while not len(path) or point != path[0]:
@@ -2207,9 +2198,9 @@ class Block:
                         keys = [key for key in rotated_point_mapping]
                         if len(path) > 1:
                             angle[d1] += math.atan2(reverse_point_mapping[path[-1]][d3],reverse_point_mapping[path[-1]][d2])
-                            rotated_point_mapping = {x:rotated_point_mapping[keys[i]] for i,x in enumerate(rotate([(y[0]-reverse_point_mapping[path[-1]][0],y[1]-reverse_point_mapping[path[-1]][1],y[2]-reverse_point_mapping[path[-1]][2]) for y in keys], angle))}
+                            rotated_point_mapping = {x:rotated_point_mapping[keys[i]] for i,x in enumerate(rotate([tuple(y[j]-reverse_point_mapping[path[-1]][j] for j in range(3)) for y in keys], angle))}
                         else:
-                            rotated_point_mapping = {(x[0]-reverse_point_mapping[path[-1]][0],x[1]-reverse_point_mapping[path[-1]][1],x[2]-reverse_point_mapping[path[-1]][2]):rotated_point_mapping[x] for x in keys}
+                            rotated_point_mapping = {tuple(x[j]-reverse_point_mapping[path[-1]][j] for j in range(3)):rotated_point_mapping[x] for x in keys}
                         reverse_point_mapping = {rotated_point_mapping[key]:key for key in rotated_point_mapping}
                         gift_wrap = []
                         for key in rotated_point_mapping:
@@ -2232,7 +2223,6 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
-        '''
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
             #print(p1,p2)
@@ -2876,7 +2866,7 @@ if __name__ == "__main__":
                         elif block.select[3] == 1:
                             block.select_size[0] += direction*dir_mult1*block.unit
                             if block.select_size[0] == 0:
-                                block.select_size[0] = -direction*dir_mult1*block.unit
+                                block.select_size[0] = direction*dir_mult1*block.unit
                                 if block.select_size[0] == block.unit:
                                     block.select[0] -= block.unit
                                     block.select_size[0] += block.unit
@@ -2928,9 +2918,6 @@ if __name__ == "__main__":
                     k,k_max = block.select[2],block.select[2]+block.select_size[2]
                     if block.select_size[2] < 0:
                         k,k_max = k_max,k
-                    i = min(block.select[0],block.select[0]+block.select_size[0])
-                    j = min(block.select[1],block.select[1]+block.select_size[1])
-                    k = min(block.select[2],block.select[2]+block.select_size[2])
                     size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
                     box = Box((float(i),float(i+size[0])),(float(j),float(j+size[1])),(float(k),float(k+size[2])))
                     #print('box',(i,i+size[0]),(j,j+size[1]),(k,k+size[2]))
