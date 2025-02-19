@@ -371,6 +371,29 @@ class Polyhedron {
         vector<std::array<double,3>> points_vector(points.begin(),points.end());
         return Polyhedron::coplanar(points_vector);
     }
+    static bool point_on_segment(set<std::array<double,3>> edge, std::array<double,3> point) {
+        set<std::array<double,3>>::iterator it = edge.begin();
+        std::array<double,3> p1 = *(it);
+        it++;
+        std::array<double,3> p2 = *(it);
+        MatrixXd m(3,1);
+        VectorXd b(3);
+        for (int i = 0; i < 3; i++) {
+            m(i,0) = p1[i]-p2[i];
+            b(i) = point[i]-p2[i];
+        }
+        VectorXd x = m.colPivHouseholderQr().solve(b);
+        VectorXd b_prime = m*x;
+        for (int i=0; i < 3; i++) {
+            if ( abs(b_prime(i)-b(i)) > 0.1*abs(b(i)) ) {
+                return false;
+            }
+        }
+        if (x(0) >= 0 && x(0) <= 1) {
+            return true;
+        }
+        return false;
+    }
     static bool inside_triangle(std::array<std::array<double,3>,3> triangle, std::array<double,3> point) {
         if (find(triangle.begin(),triangle.end(),point) != triangle.end()) {
             return true;
@@ -457,8 +480,8 @@ class Polyhedron {
         p1 = Polyhedron::rotate({p1}, {0,angle[1],0})[0];
         angle[1] = -angle[1];
         angle[2] = -angle[2];
-        std::array<double,3> p2 = Polyhedron::rotate({{circuit[0][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
-        angle[0] = -atan2(-p2[2],p2[1]);
+        std::array<double,3> p2 = Polyhedron::rotate({{circuit[2][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
+        angle[0] = -atan2(p2[2]-p1[2],p2[1]-p1[1]);
         std::array<double,3> start = {circuit[0][0],circuit[0][1],circuit[0][2]};
         for (std::array<double,3>& x : circuit) {
             for (int i = 0; i < 3; i++) {
@@ -472,6 +495,11 @@ class Polyhedron {
         for (std::array<double,3>& x : output) {
             x[2] = 0;
         }
+        cout << "[" << angle[0] << "," << angle[1] << "," << angle[2] << "] " << endl;
+        for (std::array<double,3>& x : output) {
+            cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
+        }
+        cout << "make_planar" <<endl;
         return output;
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
@@ -682,9 +710,9 @@ class Polyhedron {
                 bool double_break = false;
                 for (const std::array<double,3>& y : output[output.size()-1]) {
                     segment = {x,y};
-                    set<vector<std::array<double,3>>> interior_circuits(output.begin()+1,output.end()-1);
+                    set<vector<std::array<double,3>>> interior_circuits(output.begin(),output.end()-1);
                     vector<Polyhedron::CircuitIntersection> intersections = Polyhedron::circuit_intersect(segment, interior_circuits);
-                    if (!intersections.size()) {
+                    if (intersections.size() == 1) {
                         double_break = true;
                         break;
                     }
@@ -722,12 +750,69 @@ class Polyhedron {
                     break;
                 }
             }
-            vector<std::array<double,3>> temp(output.back().begin(),output.back().begin()+i);
+            cout << "i " << i << " j " << j << endl; 
+            vector<std::array<double,3>>::iterator it1 = output.back().begin()+i;
+            while (it1 != output.back().end()) {
+                int d = std::distance(output.back().begin(),it1);
+                vector<std::array<double,3>> planar1;
+                vector<std::array<double,3>> planar2;
+                if (*it1 == first_exterior_intersection.point) {
+                    planar1 = Polyhedron::make_planar({output.back()[(d-1+output.back().size())%output.back().size()],*it1,output.back()[(d+1)%output.back().size()]});
+		            std::array<double,3> point = last_interior_intersection.point;
+                    for (int k = 0; point == *it1; k++) {
+                        point = last_interior_intersection.circuit[(j-1-k+last_interior_intersection.circuit.size())%last_interior_intersection.circuit.size()];
+		            }
+                    planar2 = Polyhedron::make_planar({output.back()[(d-1+output.back().size())%output.back().size()],*it1,point});
+                 } else {
+                    planar1 = Polyhedron::make_planar({output.back()[(d-1+output.back().size())%output.back().size()],first_exterior_intersection.point,*it1});
+		            std::array<double,3> point = last_interior_intersection.point;
+                    for (int k = 0; point == first_exterior_intersection.point; k++) {
+                        point = last_interior_intersection.circuit[(j-1-k+last_interior_intersection.circuit.size())%last_interior_intersection.circuit.size()];
+		            }
+                    planar2 = Polyhedron::make_planar({output.back()[(d-1+output.back().size())%output.back().size()],first_exterior_intersection.point,point});
+                }
+                for (int k = 0; k < 3; k++) {
+                    planar1[0][k] -= planar1[1][k];
+                    planar1[2][k] -= planar1[1][k];
+                    planar1[1][k] -= planar1[1][k];
+                }
+                std::array<double,3> angle1 = {0,0,-atan2(planar1[1][1]-planar1[0][1],planar1[1][0]-planar1[0][0])};
+                planar1 = Polyhedron::rotate(planar1, angle1);
+                double theta1 = atan2(planar1[2][1],planar1[2][0]);
+                for (int k = 0; k < 3; k++) {
+                    planar2[0][k] -= planar2[1][k];
+                    planar2[2][k] -= planar2[1][k];
+                    planar2[1][k] -= planar2[1][k];
+                }
+                std::array<double,3> angle2 = {0,0,-atan2(planar2[1][1]-planar2[0][1],planar2[1][0]-planar2[0][0])};
+                planar2 = Polyhedron::rotate(planar2, angle2);
+                double theta2 = atan2(planar2[2][1],planar2[2][0]);
+                cout << planar2[2][0] << " " << planar2[2][1] << endl;
+                cout << "angle1 " << angle1[2] << " angle2 " << angle2[2] << endl;
+                cout << "theta1 " << theta1 << " theta2 " << theta2 << endl;
+                if (theta2 < theta1) {
+                    break;
+                }
+                vector<std::array<double,3>>::iterator it2 = it1+1;
+                while(it2 != output.back().end()) {
+                    d = std::distance(output.back().begin(),it2);
+                    if (Polyhedron::point_on_segment({*it2,output.back()[(d+1)%output.back().size()]},first_exterior_intersection.point)) {
+                        break;
+                    }
+                    it2++;
+                }
+                if (it2 == output.back().end()) {
+                    break;
+                }
+                it1 = it2+1;
+                //it1 = find(it1+1,output.back().end(),first_exterior_intersection.point);
+            }
+            i = std::distance(output.back().begin(),it1);
+            vector<std::array<double,3>> temp(output.back().begin(),it1);
             for (int k = 0; k < i; k++) {
                 cout << "[" << output.back()[k][0] << "," << output.back()[k][1] << "," << output.back()[k][2] << "] ";
             }
             cout << "--> ";
-
             temp.push_back(first_exterior_intersection.point);
             cout << "[" << first_exterior_intersection.point[0] << "," << first_exterior_intersection.point[1] << "," << first_exterior_intersection.point[2] << "] ";
             temp.push_back(last_interior_intersection.point);
@@ -754,8 +839,8 @@ class Polyhedron {
             }
             cout << endl;
             output[output.size()-1] = temp;
-            vector<vector<std::array<double,3>>>::iterator it = find(output.begin(),output.end(),last_interior_intersection.circuit);
-            int index = std::distance(output.begin(),it);
+            vector<vector<std::array<double,3>>>::iterator it3 = find(output.begin(),output.end(),last_interior_intersection.circuit);
+            int index = std::distance(output.begin(),it3);
             output.erase(output.begin()+index);
             for(i = 1; i < output[output.size()-1].size()+1;){
                 if (output[output.size()-1][i%output[output.size()-1].size()] == output[output.size()-1][i-1]) {
@@ -1024,29 +1109,6 @@ class Box {
         y_max = y[1];
         z_min = z[0];
         z_max = z[1];
-    }
-    static bool point_on_segment(set<std::array<double,3>> edge, std::array<double,3> point) {
-        set<std::array<double,3>>::iterator it = edge.begin();
-        std::array<double,3> p1 = *(it);
-        it++;
-        std::array<double,3> p2 = *(it);
-        MatrixXd m(3,1);
-        VectorXd b(3);
-        for (int i = 0; i < 3; i++) {
-            m(i,0) = p1[i]-p2[i];
-            b(i) = point[i]-p2[i];
-        }
-        VectorXd x = m.colPivHouseholderQr().solve(b);
-        VectorXd b_prime = m*x;
-        for (int i=0; i < 3; i++) {
-            if ( abs(b_prime(i)-b(i)) > 0.1*abs(b(i)) ) {
-                return false;
-            }
-        }
-        if (x(0) >= 0 && x(0) <= 1) {
-            return true;
-        }
-        return false;
     }
     static std::array<double,3>* intersect_segments(set<std::array<double,3>> edge1, set<std::array<double,3>> edge2) {
         set<std::array<double,3>>::iterator it = edge1.begin();
@@ -1364,7 +1426,7 @@ class Box {
                     }
                     delete intersection;
                 } else {
-                    if (Box::point_on_segment({box[(j-1+box.size())%box.size()], box[j]}, p1) && Box::point_on_segment({box[(j-1+box.size())%box.size()], box[j]}, p2)) {
+                    if (Polyhedron::point_on_segment({box[(j-1+box.size())%box.size()], box[j]}, p1) && Polyhedron::point_on_segment({box[(j-1+box.size())%box.size()], box[j]}, p2)) {
                         if (find(box.begin(),box.end(),p1) == box.end()) {
                             last_intersections.push_back(p1);
                         }
@@ -1495,7 +1557,7 @@ class Box {
             for (const set<std::array<double,3>>& edge2 : f) {
                 bool no_break = true;
                 for (std::array<double,3> point : edge1) {
-                    if (!Box::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
+                    if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
                         no_break = false;
                         break;
                     }
@@ -1555,7 +1617,7 @@ class Box {
             for (const std::array<double,3>& intersection : intersections) {
                 intersections_rounded.push_back(Polyhedron::round_point(intersection));
                 for (int j = 0; j < box.size(); j++) {
-                    if (Box::point_on_segment(Polyhedron::round_edge({box[(j-1+box.size())%box.size()],box[j]}), Polyhedron::round_point(intersection)) && Polyhedron::round_point(box[(j-1+box.size())%box.size()]) != Polyhedron::round_point(intersection) && Polyhedron::round_point(box[j]) != Polyhedron::round_point(intersection)) {
+                    if (Polyhedron::point_on_segment(Polyhedron::round_edge({box[(j-1+box.size())%box.size()],box[j]}), Polyhedron::round_point(intersection)) && Polyhedron::round_point(box[(j-1+box.size())%box.size()]) != Polyhedron::round_point(intersection) && Polyhedron::round_point(box[j]) != Polyhedron::round_point(intersection)) {
                         box.insert(box.begin() + j, intersection);
                         break;
                     }
@@ -1741,7 +1803,7 @@ class Box {
                                 for (const set<std::array<double,3>>& edge2 : output.new_edges) {
                                     bool no_break2 = true;
                                     for (const std::array<double,3> point : edge1) {
-                                        if (!Box::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
+                                        if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
                                             no_break2 = false;
                                             break;
                                         }
@@ -1802,7 +1864,7 @@ class Box {
                     bool any = false;
                     std::array<double,3> p3 = {(p1[0]+p2[0])/2,(p1[1]+p2[1])/2,(p1[2]+p2[2])/2};
                     for (set<std::array<double,3>> edge2 : edge_union) {
-                        if (Box::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(p3))) {
+                        if (Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(p3))) {
                             any = true;
                             break;
                         } 
@@ -1814,7 +1876,7 @@ class Box {
                     for (const set<std::array<double,3>>& edge2 : edge_union) {
                         bool no_break2 = true;
                         for(const std::array<double,3>& point : edge1) {
-                            if (!Box::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
+                            if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(point))) {
                                 no_break2 = false;
                                 break;
                             }
@@ -2184,7 +2246,7 @@ class Box {
                             if (find(old_face_indices.begin(), old_face_indices.end(), box_map[i]) != old_face_indices.end()) {
                                 bool no_break = true;
                                 for (const set<std::array<double,3>>& edge2 : faces[box_map[i]]) {
-                                    if (Box::point_on_segment(edge2,box[(j-1+box.size())%box.size()]) && Box::point_on_segment(edge2, box[j])) {
+                                    if (Polyhedron::point_on_segment(edge2,box[(j-1+box.size())%box.size()]) && Polyhedron::point_on_segment(edge2, box[j])) {
                                         set<std::array<double,3>>::iterator it = edge2.begin();
                                         std::array<double,3> p1 = *(it);
                                         std::array<double,3> p2 = *(++it);
@@ -2237,7 +2299,7 @@ class Box {
                         if (find(faces[face_index].begin(), faces[face_index].end(), set<std::array<double,3>>{circuit[(i-1+circuit.size())%circuit.size()],circuit[i]}) != faces[face_index].end()) {
                             bool any = false;
                             for (int j = 0; j < exterior_circuit->size(); j++) {
-                                if (Box::point_on_segment({(*exterior_circuit)[(j-1+exterior_circuit->size())%exterior_circuit->size()],(*exterior_circuit)[j]},circuit[(i-1+circuit.size())%circuit.size()]) && Box::point_on_segment({(*exterior_circuit)[(j-1+exterior_circuit->size())%exterior_circuit->size()]},circuit[i])) {
+                                if (Polyhedron::point_on_segment({(*exterior_circuit)[(j-1+exterior_circuit->size())%exterior_circuit->size()],(*exterior_circuit)[j]},circuit[(i-1+circuit.size())%circuit.size()]) && Polyhedron::point_on_segment({(*exterior_circuit)[(j-1+exterior_circuit->size())%exterior_circuit->size()]},circuit[i])) {
                                     any = true;
                                     break;
                                 }
@@ -2568,7 +2630,7 @@ class Box {
         new_faces[3].insert(new_edge);
         map<int,set<set<set<std::array<double,3>>>>> mapping;
         for (int face_index1 = 0; face_index1 < faces.size(); face_index1++) {
-            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(poly.circuits(face_index1));
+            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(Polyhedron::make_clockwise(poly.circuits(face_index1)));
             bool any = false;
             for (const set<std::array<double,3>>& edge : faces[face_index1]) {
                 if (this->intersect(edge)) {
@@ -2639,7 +2701,7 @@ class Box {
                                                 std::array<double,3> p3 = *(it);
                                                 it++;
                                                 std::array<double,3> p4 = *(it);
-                                                if (Box::point_on_segment(edge2, p1) && Box::point_on_segment(edge2, p2) || (Box::point_on_segment(edge1, p3) && Box::point_on_segment(edge1, p4))) {
+                                                if (Polyhedron::point_on_segment(edge2, p1) && Polyhedron::point_on_segment(edge2, p2) || (Polyhedron::point_on_segment(edge1, p3) && Polyhedron::point_on_segment(edge1, p4))) {
                                                     triple_break = true;
                                                     break;
                                                 }
@@ -2742,7 +2804,7 @@ class Box {
                     for (const set<std::array<double,3>>& edge2 : new_faces[p.first]) {
                         bool no_break2 = true;
                         for (const std::array<double,3>& point : edge2) {
-                            if (!Box::point_on_segment(Polyhedron::round_edge(edge1),Polyhedron::round_point(point))) {
+                            if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge1),Polyhedron::round_point(point))) {
                                 no_break2 = false;
                                 break;
                             }
@@ -2771,7 +2833,7 @@ class Box {
                         }
                         no_break2 = true;
                         for (const std::array<double,3>& point : edge1) {
-                            if (!Box::point_on_segment(Polyhedron::round_edge(edge2),Polyhedron::round_point(point))) {
+                            if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2),Polyhedron::round_point(point))) {
                                 no_break2 = false;
                                 break;
                             }
@@ -2816,7 +2878,7 @@ class Box {
                             std::array<std::array<double,3>,2> edge2_array;
                             edge2_array[0] = p3;
                             edge2_array[1] = p4;
-                            if (Box::point_on_segment(edge2, p1) and Box::point_on_segment(edge1, p3)) {
+                            if (Polyhedron::point_on_segment(edge2, p1) and Polyhedron::point_on_segment(edge1, p3)) {
                                 new_faces[p.first].erase(edge2);
                                 PointDistanceComparator comp = PointDistanceComparator(p2);
                                 sort(edge2_array.begin(),edge2_array.end(),comp);
@@ -2829,7 +2891,7 @@ class Box {
                                 no_break1 = false;
                                 break;
                             }
-                            if (Box::point_on_segment(edge2, p2) and Box::point_on_segment(edge1, p3)) {
+                            if (Polyhedron::point_on_segment(edge2, p2) and Polyhedron::point_on_segment(edge1, p3)) {
                                 new_faces[p.first].erase(edge2);
                                 PointDistanceComparator comp = PointDistanceComparator(p1);
                                 sort(edge2_array.begin(),edge2_array.end(),comp);
@@ -2842,7 +2904,7 @@ class Box {
                                 no_break1 = false;
                                 break;
                             }
-                            if (Box::point_on_segment(edge2, p1) and Box::point_on_segment(edge1, p4)) {
+                            if (Polyhedron::point_on_segment(edge2, p1) and Polyhedron::point_on_segment(edge1, p4)) {
                                 new_faces[p.first].erase(edge2);
                                 PointDistanceComparator comp = PointDistanceComparator(p2);
                                 sort(edge2_array.begin(),edge2_array.end(),comp);
@@ -2855,7 +2917,7 @@ class Box {
                                 no_break1 = false;
                                 break;
                             }
-                            if (Box::point_on_segment(edge2, p2) and Box::point_on_segment(edge1, p4)) {
+                            if (Polyhedron::point_on_segment(edge2, p2) and Polyhedron::point_on_segment(edge1, p4)) {
                                 new_faces[p.first].erase(edge2);
                                 PointDistanceComparator comp = PointDistanceComparator(p1);
                                 sort(edge2_array.begin(),edge2_array.end(),comp);
@@ -2893,6 +2955,16 @@ class Box {
                         set<std::array<double,3>> edge_union;
                         set_union(edge1.begin(),edge1.end(),edge2.begin(),edge2.end(),inserter(edge_union, edge_union.begin()));
                         if (edge_intersection.size()==1 && Polyhedron::colinear(edge_union)) {
+                            bool to_continue = false;
+                            for (const set<std::array<double,3>>& edge3: face) {
+                                if (edge3 != edge1 && edge3 != edge2 && edge3.find(*(edge_intersection.begin())) != edge3.end()) {
+                                    to_continue = true;
+                                    break;
+                                }
+                            }
+                            if (to_continue) {
+                                continue;
+                            }
                             map<std::array<double,3>,std::array<double,3>> point_map;
                             for (const std::array<double,3>& point : edge1) {
                                 point_map[Polyhedron::round_point(point)] = point;
@@ -2977,6 +3049,16 @@ class Box {
                         set<std::array<double,3>> edge_union;
                         set_union(edge1.begin(),edge1.end(),edge2.begin(),edge2.end(),inserter(edge_union, edge_union.begin()));
                         if (edge_intersection.size()==1 && Polyhedron::colinear(edge_union)) {
+                            bool to_continue = false;
+                            for (const set<std::array<double,3>>& edge3: face) {
+                                if (edge3 != edge1 && edge3 != edge2 && edge3.find(*(edge_intersection.begin())) != edge3.end()) {
+                                    to_continue = true;
+                                    break;
+                                }
+                            }
+                            if (to_continue) {
+                                continue;
+                            }
                             map<std::array<double,3>,std::array<double,3>> point_map;
                             for (const std::array<double,3>& point : edge1) {
                                 point_map[Polyhedron::round_point(point)] = point;
