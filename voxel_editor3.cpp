@@ -12,7 +12,27 @@
 #include <iostream>
 #include <chrono>
 #include <queue>
+#include <fstream>
 
+inline std::string ltrim(std::string s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    return s;
+}
+
+// trim from end (copying)
+inline std::string rtrim(std::string s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+    return s;
+}
+
+// trim from both ends (copying)
+inline std::string trim(std::string s) {
+    return rtrim(ltrim(s));
+}
 using namespace Eigen;
 using namespace std;
 
@@ -520,7 +540,7 @@ class Polyhedron {
         angle[1] = -angle[1];
         angle[2] = -angle[2];
         std::array<double,3> p2 = Polyhedron::rotate({{circuit[2][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
-        angle[0] = -atan2(p2[2]-p1[2],p2[1]-p1[1]);
+        angle[0] = -atan2(circuit[2][2]-circuit[0][2],circuit[2][1]-circuit[0][1]);
         std::array<double,3> start = {circuit[0][0],circuit[0][1],circuit[0][2]};
         for (std::array<double,3>& x : circuit) {
             for (int i = 0; i < 3; i++) {
@@ -638,6 +658,13 @@ class Polyhedron {
                 cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
             }
             cout << "; ";
+            for (int i = 0; i < remainder.size();) {
+                if (Polyhedron::colinear(set<std::array<double,3>>{remainder[(i-1+remainder.size())%remainder.size()],remainder[i],remainder[(i+1)%remainder.size()]})) {
+                    remainder.erase(remainder.begin()+i);
+                } else {
+                    i++;
+                }
+            }
             output.push_back(ear_clip.ear);
             for (const std::array<double,3>& point : ear_clip.ear) {
                 cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
@@ -731,9 +758,10 @@ class Polyhedron {
         return a.alpha < b.alpha;
     }
     static vector<std::array<double,3>>* circuit_cut(set<vector<std::array<double,3>>> circuits) {
-        cout << "circuits" << endl;
+        cout << "circuits" << circuits.size() << endl;
         for (const vector<std::array<double,3>>& circuit : circuits) {
             for (const std::array<double,3> point : circuit) {
+                cout << point.size() << endl;
                 cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
             }
             cout << endl;
@@ -1093,6 +1121,225 @@ class Polyhedron {
             }
         }
     }
+    string exp() {
+        string output1;
+        string output2;
+        output1 += "ply\n";
+        output1 += "format ascii 1.0\n";
+        output1 += "element vertex " + to_string(verts.size()) + "\n";
+        output1 += "property float x\n";
+        output1 += "property float y\n";
+        output1 += "property float z\n";
+        int face_count = 0;
+        for (const std::array<double,3>& vert : verts) {
+            output2 += to_string(vert[0]) + " " + to_string(vert[2]) + " " + to_string(vert[1]) + "\n";
+        }
+        for (int face_index = 0; face_index < faces.size(); face_index++) {
+            set<vector<std::array<double,3>>> circs = Polyhedron::make_clockwise(this->circuits(face_index));
+            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(circs);
+            if (circs.size() == 1) {
+                face_count++;
+                output2 += to_string(circuit->size()) + " ";
+                for (const std::array<double,3>& point : *circuit){
+                    int index = std::distance(verts.begin(),find(verts.begin(),verts.end(),point));
+                    output2 += to_string(index) + " ";
+                }
+                output2 += "\n";
+            } else {
+                for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
+                    face_count++;
+                    output2 += "3 ";
+                    for (const std::array<double,3>& point : triangle){
+                        int index = std::distance(verts.begin(),find(verts.begin(),verts.end(),point));
+                        output2 += to_string(index) + " ";
+                    }
+                    output2 += "\n";
+                }
+            }
+            delete circuit;
+        }
+        output1 += "element face " + to_string(face_count) + "\n";
+        output1 += "property list uchar uint vertex_indices\n";
+        output1 += "end_header\n";
+        return output1 + output2;
+    }
+    bool exp(string filename) {
+        ofstream output_file(filename);
+        if (output_file.is_open()) {
+            output_file << this->exp();
+            return true;
+        }
+        return false;
+    }
+    string dump() {
+        string output;
+        output += "ply\n";
+        output += "format ascii 1.0\n";
+        output += "element vertex " + to_string(verts.size()) + "\n";
+        output += "property float x\n";
+        output += "property float y\n";
+        output += "property float z\n";
+        output += "element edge " + to_string(edges.size()) + "\n";
+        output += "property list uchar uint vertex_indices\n";
+        output += "element face " + to_string(faces.size()) + "\n";
+        output += "property list uchar uint edge_indices\n";
+        output += "end_header\n";
+        for (const std::array<double,3>& vert : verts) {
+            output += to_string(vert[0]) + " " + to_string(vert[1]) + " " + to_string(vert[2]) + "\n";
+        }
+        for (const set<int>& edge : edges) {
+            output += "2 ";
+            for (const int& index : edge){
+                output += to_string(index) + " ";
+            }
+            output += "\n";
+        }
+        for (const set<int>& face : faces) {
+            output += to_string(face.size()) + " ";
+            for (const int& index : face){
+                output += to_string(index) + " ";
+            }
+            output += "\n";
+        }
+        return output;
+    }
+    bool dump(string filename) {
+        ofstream output_file(filename);
+        if (output_file.is_open()) {
+            output_file << this->dump();
+            return true;
+        }
+        return false;
+    }
+    void loads(string text){
+        int element_index = -1;
+        int vert_count = 0;
+        int edge_count = 0;
+        int face_count = 0;
+        vector<string> elements_vector;
+        map<string,vector<string>> elements;
+        verts.clear();
+        edges.clear();
+        faces.clear();
+        while (text.size()) {
+            std::string line;
+            if (text.find("\n") != std::string::npos) {
+                line = text.substr(0,text.find("\n")+1);
+                text = text.substr(text.find("\n")+1,text.size()-1-1);
+            } else {
+                line = text;
+                text = "";
+            }
+            cout << line;
+            line = trim(line);
+            vector<string> split_line;
+            while (line.size()) {
+                string token;
+                if (line.find(" ") != std::string::npos) {
+                    token = line.substr(0, line.find(" "));
+                    line = line.substr(line.find(" ")+1,line.size()-line.find(" ")-1);
+                } else {
+                    token = line;
+                    line = "";
+                }
+                if (token.size()) {
+                    split_line.push_back(token);
+                }
+            }
+            if (split_line.size() >= 1 && split_line[0] == "end_header") {
+                element_index = 0;
+            }
+            if (element_index == -1) {
+                if (split_line.size() >= 3) {
+                    if (split_line[0] == "element") {
+                        elements_vector.push_back(split_line[1]);
+                        int element_count = stoi(split_line[2]);
+                        if (split_line[1] == "vertex") {
+                            vert_count = element_count;
+                        } else if (split_line[1] ==  "edge") {
+                            edge_count = element_count;
+                        } else if (split_line[1] == "face") {
+                            face_count = element_count;
+                        }
+                    } else if (split_line[0] == "property") {
+                        if (split_line[1] == "float") {
+                            elements[elements_vector.back()].push_back(split_line[2]);
+                        }
+                        if (split_line.size() >= 5) {
+                            if (vector<string>(split_line.begin()+1,split_line.begin()+1+3) == vector<string>{"list", "uchar", "uint"}) {
+                                elements[elements_vector.back()].push_back(split_line[4]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                string element = elements_vector[element_index];
+                if (split_line.size() >= elements[element].size()) {
+                    int index = 0;
+                    std::array<double,3> vert;
+                    for (const string& property : elements[element]) {
+                        string suffix = "_indices";
+                        if (property.size() >= suffix.size() && property.substr(property.size()-suffix.size(), suffix.size()) == suffix) {
+                            set<int> facet;
+                            int property_count = stoi(split_line[index]);
+                            for (int i = 0; i < property_count; i++) {
+                                facet.insert(stoi(split_line[index+1+i]));
+                            }
+                            index += 1+property_count;
+                            if (element == "edge") {
+                                if (property == "vertex_indices") {
+                                    edges.push_back(facet);
+                                }
+                            } else if (element == "face") {
+                                if (property == "edge_indices") {
+                                    faces.push_back(facet);
+                                }
+                            }
+                        } else {
+                            if (element == "vertex") {
+                                if (property == "x") {
+                                    vert[0] = stod(split_line[index]);
+                                } else if (property == "y") {
+                                    vert[1] = stod(split_line[index]);
+                                } else if (property == "z") {
+                                    vert[2] = stod(split_line[index]);
+                                }
+                            }
+                            index++;
+                        }
+                    }
+                    if (element == "vertex") {
+                        verts.push_back(vert);
+                        if (verts.size() == vert_count) {
+                            element_index++;
+                        }
+                    } else if (element == "edge") {
+                        if (edges.size() == edge_count) {
+                            element_index++;
+                        }
+                    } else if (element == "face") {
+                        if (faces.size() == face_count) {
+                            element_index++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    bool load(string filename) {
+        std::ifstream file(filename);
+        string text;
+        if (file.is_open()) {
+            string line;
+            while(std::getline(file, line)) {
+                text += line + "\n";
+            }
+            loads(text);
+            file.close();
+            return true;
+        }
+        return false;
+    }
 };
 
 class Camera {
@@ -1189,7 +1436,7 @@ class Box {
         }
         return NULL;
     }
-    bool intersect(set<std::array<double,3>> edge) {
+    bool intersect(set<std::array<double,3>> edge) const {
         set<std::array<double,3>>::iterator it = edge.begin();
         std::array<double,3> p1 = *(it);
         it++;
@@ -1338,7 +1585,7 @@ class Box {
         set<set<std::array<double,3>>> path_edges;
         int box_index;
     };
-    DelPreprocessOutput del_preprocess(Polyhedron poly, int face_index) {
+    DelPreprocessOutput del_preprocess(Polyhedron poly, int face_index) const {
         set<int> face = poly.faces[face_index];
         vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(poly.circuits(face_index));
         DelPreprocessOutput output;
@@ -2002,7 +2249,7 @@ class Box {
         delete circuit;
         return output;
     }
-    Polyhedron del(Polyhedron poly) {
+    Polyhedron del(Polyhedron poly) const {
         std::array<double,2> x_min_max = {x_min, x_max};
         std::array<double,2> y_min_max = {y_min, y_max};
         std::array<double,2> z_min_max = {z_min, z_max};
@@ -2602,7 +2849,7 @@ class Box {
         }
         return output;
     }
-    Polyhedron add(Polyhedron poly) {
+    Polyhedron add(Polyhedron poly) const {
         vector<set<std::array<double,3>>> edges;
         for (const set<int>& edge : poly.edges) {
             set<std::array<double,3>> edge_grounded;
@@ -3276,6 +3523,7 @@ int fill_polygon(SDL_Renderer* gRenderer, vector<std::array<double,2>> points) {
 namespace voxel_editor {
 class Block {
   public:
+    std::array<double,3> origin;
     std::array<double,3> size;
     Polyhedron block;
     Polyhedron poly;
@@ -3285,11 +3533,20 @@ class Block {
     std::array<double,3> select_size;
     set<double> meters = {1};
     set<vector<std::array<double,3>>> polygons;
-    Block(double width, double height, double depth, double unit) {
-        size = {width, height, depth};
-        block = get_cube({width/2,height/2,depth/2},{width,height,depth});
+    bool space_down = false;
+    bool cylinder_tool = false;
+    int cylinder_dimension = 0;
+    set<string> cylinder_options;
+    Polyhedron cylinder_poly;
+    vector<Box> cylinder_boxes;
+    Block (std::array<double,2> x, std::array<double,2> y, std::array<double,2> z, double unit) {
+        origin = {x[0],y[0],z[0]};
+        size = {x[1]-x[0], y[1]-y[0], z[1]-z[0]};
+        block = get_cube({size[0]/2,origin[1]+size[1]/2,size[2]/2},{size[0],size[1],size[2]});
         this->unit = unit;
         select_size = {unit,unit,unit};
+    }
+    Block (double width, double height, double depth, double unit) : Block({0,width},{0,height},{0,depth}, unit) {
     }
     void flip() {
         cout << "flip" << endl;
@@ -3569,11 +3826,11 @@ class Block {
         double depth = size[2];
         Polyhedron axes;
         if (select_dimension == 0) {
-            axes = get_cube({width/2,abs(select_size[1])/2+min(select[1],select[1]+select_size[1]),depth/2}, {width,abs(select_size[1]),depth});
+            axes = get_cube({origin[0]+width/2,origin[1]+abs(select_size[1])/2+min(select[1],select[1]+select_size[1]),origin[2]+depth/2}, {width,abs(select_size[1]),depth});
         } else if (select_dimension == 1) {
-            axes = get_cube({width/2,height/2,abs(select_size[2])/2+min(select[2],select[2]+select_size[2])}, {width,height,abs(select_size[2])});
+            axes = get_cube({origin[0]+width/2,origin[1]+height/2,origin[2]+abs(select_size[2])/2+min(select[2],select[2]+select_size[2])}, {width,height,abs(select_size[2])});
         } else if (select_dimension == 2) {
-            axes = get_cube({abs(select_size[0])/2+min(select[0],select[0]+select_size[0]),height/2,depth/2}, {abs(select_size[0]),height,depth});
+            axes = get_cube({origin[0]+abs(select_size[0])/2+min(select[0],select[0]+select_size[0]),origin[1]+height/2,origin[2]+depth/2}, {abs(select_size[0]),height,depth});
         }
         SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
         for (const set<int>& edge : axes.edges) {
@@ -3585,8 +3842,45 @@ class Block {
             p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
             SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
         }
-        Polyhedron select_cube = get_cube({select[0]+select_size[0]/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, select_size);
         SDL_SetRenderDrawColor( gRenderer, 0x80, 0x80, 0x80, 0xFF );
+        if (select[2] > origin[2]) {
+            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,origin[1]+select[1]+select_size[1]/2,(select[2]-origin[2])/2}, {select_size[0],select_size[1],select[2]-origin[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        if (select[1] > origin[1]) {
+            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,(select[1]-origin[1])/2,select[2]+select_size[2]/2}, {select_size[0],select[1]-origin[1],select_size[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        if (select[0] > origin[0]) {
+            Polyhedron shadow = get_cube({(select[0]-origin[0])/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, {select[0]-origin[0],select_size[1],select_size[2]});
+            for (const set<int>& edge : shadow.edges) {
+                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
+                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+                p1[0] += SCREEN_WIDTH/2;
+                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                p2[0] += SCREEN_WIDTH/2;
+                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+        }
+        Polyhedron select_cube = get_cube({select[0]+select_size[0]/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, select_size);
+        SDL_SetRenderDrawColor( gRenderer, 0xA0, 0xA0, 0xA0, 0xFF );
         for (const set<int>& edge : select_cube.edges) {
             std::array<double,2> p1 = camera.project(select_cube.verts[*(edge.begin())]);
             std::array<double,2> p2 = camera.project(select_cube.verts[*(++edge.begin())]);
@@ -3596,36 +3890,259 @@ class Block {
             p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
             SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
         }
-        SDL_SetRenderDrawColor( gRenderer, 0x80, 0x80, 0x80, 0xFF );
-        if (select[2] > 0) {
-            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,select[1]+select_size[1]/2,0+select[2]/2}, {select_size[0],select_size[1],select[2]});
-            for (const set<int>& edge : shadow.edges) {
-                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
-                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
-                p1[0] += SCREEN_WIDTH/2;
-                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
-                p2[0] += SCREEN_WIDTH/2;
-                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
-                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+        if (cylinder_tool) {
+            if (cylinder_dimension == 0) {
+                std::array<std::array<double,2>,2> left_edge = {{{std::numeric_limits<double>::infinity(),0},{std::numeric_limits<double>::infinity(),0}}};
+                std::array<std::array<double,2>,2> right_edge = {{{-std::numeric_limits<double>::infinity(),0},{-std::numeric_limits<double>::infinity(),0}}};
+                std::array<double,3> center = {select[0]+select_size[0]/2, select[1], select[2]+select_size[2]/2};
+                int point_count = 100;
+                vector<std::array<double,3>> ellipsoid;
+                for(int i = 0; i < point_count; i++) {
+                    ellipsoid.push_back({center[0]+cos(i*2*pi/point_count)*select_size[0]/2,center[1],center[2]+sin(i*2*pi/point_count)*select_size[2]/2});
+                }
+                vector<std::array<double,2>> ellipsoid_2D;
+                for (const std::array<double,3>& x : ellipsoid) {
+                    ellipsoid_2D.push_back(camera.project(x));
+                    ellipsoid_2D.back()[0] += SCREEN_WIDTH/2;
+                    ellipsoid_2D.back()[1] = ellipsoid_2D.back()[1]*-1+SCREEN_HEIGHT/2;
+                    if (ellipsoid_2D.back()[0] < left_edge[0][0]) {
+                        left_edge[0] = ellipsoid_2D.back();
+                    }
+                    if (ellipsoid_2D.back()[0] > right_edge[0][0]) {
+                        right_edge[0] = ellipsoid_2D.back();
+                    }
+                }
+                for (int i = 0; i < ellipsoid_2D.size(); i ++) {
+                    SDL_RenderDrawLine(gRenderer, ellipsoid_2D[i][0], ellipsoid_2D[i][1], ellipsoid_2D[(i+1)%ellipsoid_2D.size()][0], ellipsoid_2D[(i+1)%ellipsoid_2D.size()][1]);
+                }
+                center = {select[0]+select_size[0]/2, select[1]+select_size[1], select[2]+select_size[2]/2};
+                ellipsoid.clear();
+                for(int i = 0; i < point_count; i++) {
+                    ellipsoid.push_back({center[0]+cos(i*2*pi/point_count)*select_size[0]/2,center[1],center[2]+sin(i*2*pi/point_count)*select_size[2]/2});
+                }
+                ellipsoid_2D.clear();
+                for (const std::array<double,3>& x : ellipsoid) {
+                    ellipsoid_2D.push_back(camera.project(x));
+                    ellipsoid_2D.back()[0] += SCREEN_WIDTH/2;
+                    ellipsoid_2D.back()[1] = ellipsoid_2D.back()[1]*-1+SCREEN_HEIGHT/2;
+                    if (ellipsoid_2D.back()[0] < left_edge[1][0]) {
+                        left_edge[1] = ellipsoid_2D.back();
+                    }
+                    if (ellipsoid_2D.back()[0] > right_edge[1][0]) {
+                        right_edge[1] = ellipsoid_2D.back();
+                    }
+                }
+                for (int i = 0; i < ellipsoid_2D.size(); i ++) {
+                    SDL_RenderDrawLine(gRenderer, ellipsoid_2D[i][0], ellipsoid_2D[i][1], ellipsoid_2D[(i+1)%ellipsoid_2D.size()][0], ellipsoid_2D[(i+1)%ellipsoid_2D.size()][1]);
+                }
+                SDL_RenderDrawLine(gRenderer, left_edge[0][0], left_edge[0][1], left_edge[1][0], left_edge[1][1]);
+                SDL_RenderDrawLine(gRenderer, right_edge[0][0], right_edge[0][1], right_edge[1][0], right_edge[1][1]);
             }
-        }
-        if (select[1] > 0) {
-            Polyhedron shadow = get_cube({select[0]+select_size[0]/2,0+select[1]/2,select[2]+select_size[2]/2}, {select_size[0],select[1],select_size[2]});
-            for (const set<int>& edge : shadow.edges) {
-                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
-                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
-                p1[0] += SCREEN_WIDTH/2;
-                p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
-                p2[0] += SCREEN_WIDTH/2;
-                p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
-                SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            set<set<std::array<double,3>>> ellipsoid_shadow;
+            std::array<double,3> center = {select[0]+select_size[0]/2, min_select[1], select[2]+select_size[2]/2};
+            for(double i = min_select[0]; i < max_select[0]; i += unit) {
+                for(double j = min_select[2]; j < max_select[2]; j += unit) {
+                    bool all = true;
+                    for (const double& k : {i,i+unit}) {
+                        for (const double& l : {j,j+unit}) {
+                            double angle = atan2(l-center[2], k-center[0]);
+                            if (Polyhedron::distance(center,{k,center[1],l}) > sqrt(pow(select_size[0]/2*cos(angle),2)+pow(select_size[2]/2*sin(angle),2))) {
+                                all = false;
+                                break;
+                            }
+                        }
+                        if (!all) {
+                            break;
+                        }
+                    }
+		    if (!all) {
+		    	continue;
+		    }
+                    set<set<std::array<double,3>>> edges;
+                    edges.insert({{i,center[1],j},{i+unit,center[1],j}});
+                    edges.insert({{i+unit,center[1],j},{i+unit,center[1],j+unit}});
+                    edges.insert({{i+unit,center[1],j+unit},{i,center[1],j+unit}});
+                    edges.insert({{i,center[1],j+unit},{i,center[1],j}});
+                    for (const set<std::array<double,3>>& edge : edges) {
+                        if (ellipsoid_shadow.find(edge) == ellipsoid_shadow.end()) {
+                            ellipsoid_shadow.insert(edge);
+                        } else {
+                            ellipsoid_shadow.erase(edge);
+                        }
+                    }
+                }
             }
-        }
-        if (select[0] > 0) {
-            Polyhedron shadow = get_cube({0+select[0]/2,select[1]+select_size[1]/2,select[2]+select_size[2]/2}, {select[0],select_size[1],select_size[2]});
-            for (const set<int>& edge : shadow.edges) {
-                std::array<double,2> p1 = camera.project(shadow.verts[*(edge.begin())]);
-                std::array<double,2> p2 = camera.project(shadow.verts[*(++edge.begin())]);
+            map<double,set<set<std::array<double,3>>>> map;
+            set<set<std::array<double,3>>> ellipsoid_top;
+            for (const set<std::array<double,3>>& edge : ellipsoid_shadow) {
+                set<std::array<double,3>>::iterator it = edge.begin();
+                map[(*it)[0]].insert(edge);
+                map[(*++it)[0]].insert(edge);
+                it = edge.begin();
+                set<std::array<double,3>> new_edge = {{(*it)[0],max_select[1],(*it)[2]},{(*++it)[0],max_select[1],(*it)[2]}};
+                ellipsoid_top.insert(new_edge);
+                //std::array<double,2> p1 = camera.project(*it);
+                //std::array<double,2> p2 = camera.project(*(++it));
+                //p1[0] += SCREEN_WIDTH/2;
+                //p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
+                //p2[0] += SCREEN_WIDTH/2;
+                //p2[1] = p2[1]*-1+SCREEN_HEIGHT/2;
+                //SDL_RenderDrawLine(gRenderer, p1[0], p1[1], p2[0], p2[1]);
+            }
+            vector<set<set<std::array<double,3>>>> faces;
+            faces.push_back(ellipsoid_shadow);
+            faces.push_back(ellipsoid_top);
+            cylinder_boxes.clear();
+            double i;
+            for(i = min_select[0]; i <= max_select[0]; i += unit) {
+                if (map[i].size() == 2) {
+                    std::array<double,3> p1;
+                    std::array<double,3> p4;
+                    set<set<std::array<double,3>>>::iterator it1 = map[i].begin();
+                    set<std::array<double,3>>::iterator it2 = it1->begin();
+                    if ((*it2)[0] == i) {
+                        p1 = (*it2);
+                    } else {
+                        p1 = *(++it2);
+                    }
+                    it2 = (++it1)->begin();
+                    if ((*it2)[0] == i) {
+                        p4 = (*it2);
+                    } else {
+                        p4 = *(++it2);
+                    }
+                    vector<std::array<double,3>> circuit = {p1,{p1[0],max_select[1],p1[2]},{p4[0],max_select[1],p4[2]},p4};
+                    set<set<std::array<double,3>>> face;
+                    for (int j = 0; j < circuit.size(); j++) {
+                        face.insert({circuit[(j-1+circuit.size())%circuit.size()],circuit[j]});
+                    }
+                    faces.push_back(face);
+                }
+                if (i == max_select[0]) {
+                    break;
+                }
+                if (map[i].size() && map[i+unit].size()) {
+                    set<set<std::array<double,3>>> edge_intersect;
+                    set_intersection(map[i].begin(),map[i].end(),map[i+unit].begin(),map[i+unit].end(),inserter(edge_intersect, edge_intersect.begin()));
+                    set<set<std::array<double,3>>>::iterator it1 = edge_intersect.begin();
+                    set<std::array<double,3>>::iterator it2 = (*it1).begin();
+                    std::array<std::array<double,3>,2> edge1_array = {(*it2),*(++it2)};
+                    it2 = (*++it1).begin();
+                    std::array<std::array<double,3>,2> edge2_array = {(*it2),*(++it2)};
+                    Box::PointDistanceComparator comp = Box::PointDistanceComparator(*it2);
+                    sort(edge1_array.begin(),edge1_array.end(), comp);
+                    sort(edge2_array.begin(),edge2_array.end(), comp);
+                    std::array<double,2> x = {std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()};
+                    std::array<double,2> y = {min_select[1],max_select[1]};
+                    std::array<double,2> z = {std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()};
+                    for (const std::array<double,3>& point : edge1_array) {
+                        if (point[0] < x[0]) {
+                            x[0] = point[0];
+                        }
+                        if (point[0] > x[1]) {
+                            x[1] = point[0];
+                        }
+                        if (point[2] < z[0]) {
+                            z[0] = point[2];
+                        }
+                        if (point[2] > z[1]) {
+                            z[1] = point[2];
+                        }
+                    }
+                    for (const std::array<double,3>& point : edge2_array) {
+                        if (point[0] < x[0]) {
+                            x[0] = point[0];
+                        }
+                        if (point[0] > x[1]) {
+                            x[1] = point[0];
+                        }
+                        if (point[2] < z[0]) {
+                            z[0] = point[2];
+                        }
+                        if (point[2] > z[1]) {
+                            z[1] = point[2];
+                        }
+                    }
+                    if (cylinder_boxes.size() && cylinder_boxes.back().z_min == z[0] && cylinder_boxes.back().z_max == z[1]) {
+                        cylinder_boxes.back() = Box({cylinder_boxes.back().x_min,x[1]},y,z);
+                    } else {
+                        cylinder_boxes.push_back(Box(x,y,z));
+                    }
+                    set<set<std::array<double,3>>> face;
+                    face.insert({edge1_array[0],edge1_array[1]});
+                    face.insert({edge1_array[1],{edge1_array[1][0],max_select[1],edge1_array[1][2]}});
+                    face.insert({{edge1_array[1][0],max_select[1],edge1_array[1][2]},{edge1_array[0][0],max_select[1],edge1_array[0][2]}});
+                    face.insert({{edge1_array[0][0],max_select[1],edge1_array[0][2]},edge1_array[0]});
+                    faces.push_back(face);
+                    face.clear();
+                    face.insert({edge2_array[0],edge2_array[1]});
+                    face.insert({edge2_array[1],{edge2_array[1][0],max_select[1],edge2_array[1][2]}});
+                    face.insert({{edge2_array[1][0],max_select[1],edge2_array[1][2]},{edge2_array[0][0],max_select[1],edge2_array[0][2]}});
+                    face.insert({{edge2_array[0][0],max_select[1],edge2_array[0][2]},edge2_array[0]});
+                    faces.push_back(face);
+                }
+            }
+            for (int i = 0; i < faces.size(); i++) {
+                for (int j = i+1; j < faces.size();) {
+                    set<set<std::array<double,3>>> face_intersect;
+                    set_intersection(faces[i].begin(),faces[i].end(),faces[j].begin(),faces[j].end(),inserter(face_intersect, face_intersect.begin()));
+                    set<std::array<double,3>> point_set;
+                    for (const set<std::array<double,3>>& edge : faces[i]) {
+                        for (const std::array<double,3>& point : edge) {
+                            point_set.insert(point);
+                        }
+                    } 
+                    for (const set<std::array<double,3>>& edge : faces[j]) {
+                        for (const std::array<double,3>& point : edge) {
+                            point_set.insert(point);
+                        }
+                    } 
+                    if (face_intersect.size() && Polyhedron::coplanar(point_set)) {
+                        faces[i].insert(faces[j].begin(),faces[j].end());
+                        for (const set<std::array<double,3>>& edge : face_intersect) {
+                            faces[i].erase(edge);
+                        }
+                        faces.erase(faces.begin()+j);
+                    } else {
+                        j++;
+                    }
+                }
+            }
+            set<std::array<double,3>> verts_set;
+            set<set<std::array<double,3>>> edges_set;
+            for (const set<set<std::array<double,3>>>& face : faces) {
+                for (const set<std::array<double,3>>& edge : face) {
+                    for (const std::array<double,3>& point : edge) {
+                        verts_set.insert(point);
+                    }
+                    edges_set.insert(edge);
+                }
+            }
+            cylinder_poly.verts.clear();
+            cylinder_poly.verts.insert(cylinder_poly.verts.end(),verts_set.begin(),verts_set.end());
+            vector<set<std::array<double,3>>> edges_vector(edges_set.begin(),edges_set.end());
+            cylinder_poly.faces.clear();
+            for (const set<set<std::array<double,3>>>& face : faces) {
+                set<int> face_ungrounded;
+                for (const set<std::array<double,3>>& edge : face) {
+                    vector<set<std::array<double,3>>>::iterator it = find(edges_vector.begin(),edges_vector.end(),edge);
+                    face_ungrounded.insert(std::distance(edges_vector.begin(), it));
+                }
+                cylinder_poly.faces.push_back(face_ungrounded);
+            }
+            cylinder_poly.edges.clear();
+            for (const set<std::array<double,3>>& edge : edges_vector) {
+                set<int> edge_ungrounded;
+                for (const std::array<double,3>& point : edge) {
+                    vector<std::array<double,3>>::iterator it = find(cylinder_poly.verts.begin(),cylinder_poly.verts.end(),point);
+                    edge_ungrounded.insert(std::distance(cylinder_poly.verts.begin(),it));
+                }
+                cylinder_poly.edges.push_back(edge_ungrounded);
+            }
+            for (const set<int>& edge : cylinder_poly.edges) {
+                set<int>::iterator it = edge.begin();
+                std::array<double,2> p1 = camera.project(cylinder_poly.verts[*(it)]);
+                std::array<double,2> p2 = camera.project(cylinder_poly.verts[*(++it)]);
                 p1[0] += SCREEN_WIDTH/2;
                 p1[1] = p1[1]*-1+SCREEN_HEIGHT/2;
                 p2[0] += SCREEN_WIDTH/2;
@@ -3635,7 +4152,33 @@ class Block {
         }
     }
     voxel_editor::Block reunit(double new_unit) {
-        voxel_editor::Block b(size[0], size[1], size[2], new_unit);
+        voxel_editor::Block b({origin[0],origin[0]+size[0]}, {origin[1],origin[1]+size[1]},{origin[2],origin[2]+size[2]}, new_unit);
+        b.select = select;
+        b.select[0] = floor(b.select[0]/b.unit)*b.unit;
+        b.select[1] = floor(b.select[1]/b.unit)*b.unit;
+        b.select[2] = floor(b.select[2]/b.unit)*b.unit;
+	    b.select_dimension = select_dimension;
+	    b.select_size = select_size;
+	    b.space_down = space_down;
+	    if (!space_down || select_dimension == 2) {
+       	    b.select_size[0] = floor(b.select_size[0]/unit)*b.unit;
+        }
+	    if (!space_down || select_dimension == 0) {
+        	b.select_size[1] = floor(b.select_size[1]/unit)*b.unit;
+	    }
+        if (!space_down || select_dimension == 1) {
+            b.select_size[2] = floor(b.select_size[2]/unit)*b.unit;
+        }
+        b.poly = poly;
+        b.meters = meters;
+        b.polygons = polygons;
+    	b.cylinder_tool = cylinder_tool;
+    	b.cylinder_dimension = cylinder_dimension;
+    	b.cylinder_options = cylinder_options;
+        return b;
+    }
+    voxel_editor::Block resize(std::array<double,2>x, std::array<double,2>y, std::array<double,2>z) {
+        voxel_editor::Block b(x, y, z, unit);
         b.select = select;
         b.poly = poly;
         b.meters = meters;
@@ -3644,6 +4187,155 @@ class Block {
     }
     bool select_by_void() {
         return true;
+    }
+    bool dump(string filename) {
+        string header_insert;
+        header_insert += "element block 1\n";
+        header_insert += "property float x_min\n";
+        header_insert += "property float x_max\n";
+        header_insert += "property float y_min\n";
+        header_insert += "property float y_max\n";
+        header_insert += "property float z_min\n";
+        header_insert += "property float z_max\n";
+        header_insert += "property float unit\n";
+        header_insert += "property list uchar float meters\n";
+        string output = this->poly.dump();
+        string after = "format ascii 1.0\n";
+        int index = output.find(after)+after.size();
+        output = output.substr(0,index) + header_insert + output.substr(index,output.size()-index);
+        string body_insert;
+        body_insert += to_string(origin[0]) + " ";
+        body_insert += to_string(origin[0]+size[0]) + " ";
+        body_insert += to_string(origin[1]) + " ";
+        body_insert += to_string(origin[1]+size[1]) + " ";
+        body_insert += to_string(origin[2]) + " ";
+        body_insert += to_string(origin[2]+size[2]) + " ";
+        body_insert += to_string(unit) + " ";
+        body_insert += to_string(meters.size()) + " ";
+        for (const double& meter : meters) {
+            body_insert += to_string(meter) + " ";
+        }
+        body_insert += "\n";
+        after = "end_header\n";
+        index = output.find(after)+after.size();
+        output = output.substr(0,index) + body_insert + output.substr(index,output.size()-index);
+        ofstream output_file(filename);
+        if (output_file.is_open()) {
+            output_file << output;
+            return true;
+        }
+        return false;
+    }
+    void loads(string text) {
+        int element_index = -1;
+        vector<string> elements_vector;
+        map<string,vector<string>> elements;
+        string poly_text;
+        bool block_element = false;
+        bool first_body_line = true;
+        while (text.size()) {
+            std::string line;
+            if (text.find("\n") != std::string::npos) {
+                line = text.substr(0,text.find("\n")+1);
+                text = text.substr(text.find("\n")+1,text.size()-1-1);
+            } else {
+                line = text;
+                text = "";
+            }
+            string trim_line = trim(line);
+            vector<string> split_line;
+            while (trim_line.size()) {
+                string token;
+                if (trim_line.find(" ") != std::string::npos) {
+                    token = trim_line.substr(0, trim_line.find(" "));
+                    trim_line = trim_line.substr(trim_line.find(" ")+1,trim_line.size()-trim_line.find(" ")-1);
+                } else {
+                    token = trim_line;
+                    trim_line = "";
+                }
+                if (token.size()) {
+                    split_line.push_back(token);
+                }
+            }
+            if (split_line.size() >= 1 && split_line[0] == "end_header") {
+                element_index = 0;
+                poly_text += line;
+            } else if (element_index == -1) {
+                if (split_line.size() >= 3) {
+                    if (split_line[0] == "element") {
+                        elements_vector.push_back(split_line[1]);
+                        int element_count = stoi(split_line[2]);
+                        block_element = split_line[1] == "block";
+                    } else if (split_line[0] == "property") {
+                        if (split_line[1] == "float") {
+                            elements[elements_vector.back()].push_back(split_line[2]);
+                        }
+                        if (split_line.size() >= 5) {
+                            if (vector<string>(split_line.begin()+1,split_line.begin()+1+3) == vector<string>{"list", "uchar", "uint"}) {
+                                elements[elements_vector.back()].push_back(split_line[4]);
+                            }
+                        }
+                    }
+                }
+                if (!block_element) {
+                    poly_text += line;
+                }
+            } else {
+                if (first_body_line) {
+                    first_body_line = false;
+                } else {
+                    poly_text += line;
+                    continue;
+                }
+                string element = elements_vector[element_index];
+                if (split_line.size() >= elements[element].size()) {
+                    int index = 0;
+                    std::array<double,3> vert;
+                    for (const string& property : elements[element]) {
+                        string meter_list = "meters";
+                        if (property == meter_list) {
+                            int property_count = stoi(split_line[index]);
+                            for (int i = 0; i < property_count; i++) {
+                                meters.insert(stod(split_line[index+1+i]));
+                            }
+                            index += 1+property_count;
+                        } else {
+                            if (property == "x_min") {
+                                origin[0] = stod(split_line[index]);
+                            } else if (property == "x_max") {
+                                size[0] = stod(split_line[index])-origin[0];
+                            } else if (property == "y_min") {
+                                origin[1] = stod(split_line[index]);
+                            } else if (property == "y_max") {
+                                size[1] = stod(split_line[index])-origin[1];
+                            } else if (property == "z_min") {
+                                origin[2] = stod(split_line[index]);
+                            } else if (property == "z_max") {
+                                size[2] = stod(split_line[index])-origin[2];
+                            } else if (property == "unit") {
+                                unit = stod(split_line[index]);
+                            }
+                            index++;
+                        }
+                    }
+                }
+            }
+        }
+        poly.loads(poly_text); 
+    }
+    bool load(string filename) {
+        std::ifstream file(filename);
+        string text;
+        if (file.is_open()) {
+            string line;
+            while(std::getline(file, line)) {
+                text += line + "\n";
+            }
+            loads(text);
+            file.close();
+            return true;
+        }
+        return false;
     }
 };
 }
@@ -3720,10 +4412,10 @@ int main( int argc, char* args[] ) {
         int mousedown_x;
         int mousedown_y;
         SDL_ShowCursor(SDL_DISABLE);
-        bool space_down = false;
         bool del = false;
+        bool meta_down = false;
+        bool shift_down = true;
         voxel_editor::Block block(3,3,3,1);
-        set<double> meters = {1};
         // Main loop flag
         bool quit = false;
         // Event handler
@@ -3734,6 +4426,7 @@ int main( int argc, char* args[] ) {
             auto start = std::chrono::high_resolution_clock::now();
             // Handle events on queue
             while( SDL_PollEvent( &e ) != 0 ) {
+                 std::array<SDL_KeyCode,10> number_keys = {SDLK_1,SDLK_2,SDLK_3,SDLK_4,SDLK_5,SDLK_6,SDLK_7,SDLK_8,SDLK_9,SDLK_0};    
                 //User requests quit
                 if( e.type == SDL_QUIT ) {
                     quit = true;
@@ -3750,13 +4443,24 @@ int main( int argc, char* args[] ) {
                         mousedown_x = x;
                         mousedown_y = y;
                     }
-                    
                 } else if (e.type == SDL_MOUSEBUTTONDOWN) {
                     SDL_GetMouseState( &mousedown_x, &mousedown_y );
                     mouse_down = true;
                 } else if (e.type == SDL_MOUSEBUTTONUP) {
                     mouse_down = false;
-                } else if( e.type == SDL_KEYDOWN ) {
+                } else if(e.type == SDL_KEYDOWN && find(number_keys.begin(),number_keys.end(),e.key.keysym.sym) != number_keys.end()) {
+                    if (e.key.keysym.sym == SDLK_1) {
+                        block = block.reunit(1);
+                    } else {
+                        int index = distance(number_keys.begin(), find(number_keys.begin(),number_keys.end(),e.key.keysym.sym));
+                        if (!meta_down) {
+                            block = block.reunit(block.unit/(index+1));
+                            block.meters = Polyhedron::remeter(block.meters, block.unit);
+                        } else {
+                            block = block.reunit(block.unit*(index+1));
+                        }
+                    }
+                } else if(e.type == SDL_KEYDOWN) {
                     int direction = 1;
                     switch( e.key.keysym.sym ) {
                         case SDLK_a:
@@ -3772,7 +4476,21 @@ int main( int argc, char* args[] ) {
                             break;
 
                         case SDLK_s:
-                            camera.rotate({-M_PI/180*10,0,0});
+                            if (meta_down) {
+                                if (shift_down) {
+                                    cout << "(Exporting...) Enter filename: ";
+                                    string filename;
+                                    cin >> filename;
+                                    block.poly.exp(filename);
+                                } else {
+                                    cout << "(Saving...) Enter filename: ";
+                                    string filename;
+                                    cin >> filename;
+                                    block.dump(filename);
+                                }
+                            } else {
+                                camera.rotate({-M_PI/180*10,0,0});
+                            }
                             break;
 
                         case SDLK_q:
@@ -3782,9 +4500,160 @@ int main( int argc, char* args[] ) {
                         case SDLK_e:
                             camera.rotate({0,0,M_PI/180*10});
                             break;
-                        
+                        case SDLK_o:
+                            if (meta_down) {
+                                cout << "(Loading...) Enter filename: ";
+                                string filename;
+                                cin >> filename;
+                                block.load(filename);
+                                cout << block.poly.verts.size() << " " << block.poly.edges.size() << " " << block.poly.faces.size() << endl;
+                                block.flip();
+                            }
+                            break; 
+                        case SDLK_n:
+                            if (meta_down) {
+                                cout << "(Creating New...) Enter the origin (x y z): ";
+                                string line;
+                                std::getline(cin, line);
+                                std::array<double,3> origin;
+                                try {
+                                    int count = 0;
+                                    while (line.size() && count < 3) {
+                                        string token;
+                                        if (line.find(" ") != std::string::npos) {
+                                            token = line.substr(0, line.find(" "));
+                                            line = line.substr(line.find(" ")+1,line.size()-line.find(" ")-1);
+                                        } else {
+                                            token = line;
+                                            line = "";
+                                        }
+                                        origin[count] = stod(token);
+                                        count++;
+                                    }
+                                } catch (const std::invalid_argument& e) {
+                                    origin = {0,0,0};
+                                }
+                                cout << "(Creating New...) Enter the size: (x y z): ";
+                                line.clear();
+                                std::getline(cin, line);
+                                std::array<double,3> size;
+                                try {
+                                    int count = 0;
+                                    while (line.size() && count < 3) {
+                                        string token;
+                                        if (line.find(" ") != std::string::npos) {
+                                            token = line.substr(0, line.find(" "));
+                                            line = line.substr(line.find(" ")+1,line.size()-line.find(" ")-1);
+                                        } else {
+                                            token = line;
+                                            line = "";
+                                        }
+                                        size[count] = stod(token);
+                                        count++;
+                                    }
+                                } catch (const std::invalid_argument& e) {
+                                    size = {3,3,3};
+                                }
+                                block = voxel_editor::Block({origin[0],origin[0]+size[0]},{origin[1],origin[1]+size[1]},{origin[2],origin[2]+size[2]},1);
+                            }
+                            break; 
+                        case SDLK_p: {
+                            cout << "(Padding...) Enter padding dimension (left, right, bottom, top, front, back) and unit multiple: ";
+                            string line;
+                            string padding_dimension;
+                            int padding;
+                            std::getline(cin, line);
+                            try {
+                                int count = 0;
+                                while (line.size() && count < 2) {
+                                    string token;
+                                    if (line.find(" ") != std::string::npos) {
+                                        token = line.substr(0, line.find(" "));
+                                        line = line.substr(line.find(" ")+1,line.size()-line.find(" ")-1);
+                                    } else {
+                                        token = line;
+                                        line = "";
+                                    }
+                                    if (count == 0) {
+                                       padding_dimension = token;
+                                    } else {
+                                       padding = stoi(token);
+                                    }
+                                    count++;
+                                }
+                            } catch (const std::invalid_argument& e) {
+                                break;
+                            }
+                            if (padding_dimension == "left") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0],block.origin[0]-padding*block.unit},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0]-padding*block.unit,block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                if (block.select[0] > block.origin[0]) {
+                                    block.select[0] = block.origin[0];
+                                }
+                            } else if (padding_dimension == "right") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0]+block.size[0]+padding*block.unit,block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0],block.origin[0]+block.size[0]+padding*block.unit},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                if (block.select[0] > block.origin[0]+block.size[0]-block.unit) {
+                                    block.select[0] = block.origin[0]+block.size[0]-block.unit;
+                                }
+                            } else if (padding_dimension == "bottom") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]-padding*block.unit},{block.origin[2],block.origin[2]+block.size[2]});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1]-padding*block.unit,block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                if (block.select[1] > block.origin[1]) {
+                                    block.select[1] = block.origin[1];
+                                }
+                            } else if (padding_dimension == "top") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1]+block.size[1]+padding*block.unit,block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]+block.size[2]});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]+padding*block.unit},{block.origin[2],block.origin[2]+block.size[2]});
+                                if (block.select[1] > block.origin[1]+block.size[1]-block.unit) {
+                                    block.select[1] = block.origin[1]+block.size[1]-block.unit;
+                                }
+                            } else if (padding_dimension == "front") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2],block.origin[2]-padding*block.unit});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2]-padding*block.unit,block.origin[2]+block.size[2]});
+                                if (block.select[2] > block.origin[2]) {
+                                    block.select[2] = block.origin[2];
+                                }
+                            } else if (padding_dimension == "back") {
+                                if (padding < 0) {
+                                    Box box({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]},{block.origin[2]+block.size[2]+padding*block.unit,block.origin[2]+block.size[2]});
+                                    block.poly = box.del(block.poly);
+                                }
+                                block = block.resize({block.origin[0],block.origin[0]+block.size[0]},{block.origin[1],block.origin[1]+block.size[1]+padding*block.unit},{block.origin[2],block.origin[2]+block.size[2]+padding*block.unit});
+                                if (block.select[2] > block.origin[2]+block.size[2]-block.unit) {
+                                    block.select[2] = block.origin[2]+block.size[2]-block.unit;
+                                }
+                            }
+                            if (padding < 0) {
+                                Polyhedron::RoundPointMeter rounder(block.meters);
+                                block.poly.round_verts(rounder);
+                                block.flip();
+                            }
+                            break;
+                        } case SDLK_c:
+                            block.cylinder_tool = !block.cylinder_tool;
+                            cout << "cylinder_tool " << block.cylinder_tool << endl;
+                            break;
                         case SDLK_LSHIFT:
-                            block.select_dimension = (block.select_dimension+3-1)%3;
+                            if (!meta_down) {
+                                block.select_dimension = (block.select_dimension+3-1)%3;
+                            }
+                            shift_down = true;   
                             break;
                         
                         case SDLK_RSHIFT:
@@ -3800,7 +4669,7 @@ int main( int argc, char* args[] ) {
                             break;
 
                         case SDLK_SPACE:
-                            space_down = true;
+                            block.space_down = true;
                             break;
                         case SDLK_DOWN:
                         case SDLK_LEFT:
@@ -3809,18 +4678,10 @@ int main( int argc, char* args[] ) {
                         case SDLK_BACKSPACE:
                             del = !del;  
                             break;
-                        case SDLK_2:
-                            block = block.reunit(block.unit/2);
-                            meters = Polyhedron::remeter(meters, block.unit/2);
-                            block.meters = meters;
+                        case SDLK_LGUI:
+                        case SDLK_RGUI:
+                            meta_down = true;
                             break;
-
-                        case SDLK_3:
-                            block = block.reunit(block.unit/3);
-                            meters = Polyhedron::remeter(meters, block.unit/3);
-                            block.meters = meters;
-                            break;
-
                         default:
                             break;
                     }
@@ -3850,7 +4711,7 @@ int main( int argc, char* args[] ) {
                             if (!z_forward) {
                                 index = 0;
                             }
-                            if (!space_down) {
+                            if (!block.space_down) {
                                 if (block.select_dimension == 0) {
                                     block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*(int)(z_forward && dir_mult1 != dir_mult2));
                                     while (!block.select_by_void()) {
@@ -3918,10 +4779,10 @@ int main( int argc, char* args[] ) {
                                             block.select_size[i] += block.unit;
                                         }
                                     }
-                                    if (block.select[i] < 0) {
+                                    if (block.select[i] < block.origin[i]) {
                                         block.select[i] += block.unit;
                                     }
-                                    if (block.select[i] > block.size[i]) {
+                                    if (block.select[i] > block.origin[i]+block.size[i]) {
                                         block.select[i] -= block.unit;
                                     }
                                 }
@@ -3934,29 +4795,29 @@ int main( int argc, char* args[] ) {
                             if (!z_forward) {
                                 index = 2;
                             }
-                            if (!space_down) {
+                            if (!block.space_down) {
                                 if (block.select_dimension == 0) {
                                     block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*(int)(z_forward)-1)*(1-2*(int)(z_forward && dir_mult1 != dir_mult2));
                                     while (!block.select_by_void()) {
                                         block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*(int)(z_forward)-1)*(1-2*(int)(z_forward && dir_mult1 != dir_mult2));
                                     }
                                 } else if (block.select_dimension == 1) {
-                                    block.select[0] += direction*dir_mult1*block.unit;
+                                    block.select[0] += direction*dir_mult2*block.unit;
                                     while (!block.select_by_void()) {
-                                        block.select[0] += direction*dir_mult1*block.unit;
+                                        block.select[0] += direction*dir_mult2*block.unit;
                                     }
                                 } else if (block.select_dimension == 2) {
-                                    block.select[2] += direction*dir_mult2*block.unit;
+                                    block.select[2] -= direction*dir_mult2*block.unit;
                                     while (!block.select_by_void()) {
-                                        block.select[2] += direction*dir_mult2*block.unit;
+                                        block.select[2] -= direction*dir_mult2*block.unit;
                                     }
                                 }
                                 for (int i = 0; i <= 2; i += 2) {
                                     if (block.select[i] > block.size[i]-block.unit) {
                                         block.select[i] = block.size[i]-block.unit;
                                     }
-                                    if (block.select[i] < 0) {
-                                        block.select[i] = 0;
+                                    if (block.select[i] < block.origin[i]) {
+                                        block.select[i] = block.origin[i];
                                     }
                                 }
                             } else {
@@ -4007,10 +4868,10 @@ int main( int argc, char* args[] ) {
                                             block.select_size[i] += block.unit;
                                         }
                                     }
-                                    if (block.select[i] < 0) {
+                                    if (block.select[i] < block.origin[i]) {
                                         block.select[i] += block.unit;
                                     }
-                                    if (block.select[i] > block.size[i]) {
+                                    if (block.select[i] > block.origin[i]+block.size[i]) {
                                         block.select[i] -= block.unit;
                                     }
                                 }
@@ -4019,31 +4880,45 @@ int main( int argc, char* args[] ) {
                     }
                 } else if( e.type == SDL_KEYUP ) {
                     switch( e.key.keysym.sym ) {
-                        case SDLK_SPACE:
-                            space_down = false;
-                            double i = block.select[0];
-                            double i_max = block.select[0]+block.select_size[0];
-                            if (block.select_size[0] < 0) {
-                                swap(i,i_max);
-                            }
-                            double j = block.select[1];
-                            double j_max = block.select[1]+block.select_size[1];
-                            if (block.select_size[1] < 0) {
-                                swap(j,j_max);
-                            }
-                            double k = block.select[2];
-                            double k_max = block.select[2]+block.select_size[2];
-                            if (block.select_size[2] < 0) {
-                                swap(k,k_max);
-                            }
-                            i = min(block.select[0],block.select[0]+block.select_size[0]);
-                            j = min(block.select[1],block.select[1]+block.select_size[1]);
-                            k = min(block.select[2],block.select[2]+block.select_size[2]);
-                            std::array<double,3> size = {abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2])};
-                            Box box({i,i+size[0]},{j,j+size[1]},{k,k+size[2]});
-                            block.poly = box.del(block.poly);
-                            if (!del) {
-                                block.poly = box.add(block.poly);
+                        case SDLK_SPACE: {
+                            block.space_down = false;
+                            if (block.cylinder_tool) {
+                                int count = 0;
+                                for (const Box& box : block.cylinder_boxes) {
+                                    block.poly = box.del(block.poly);
+                                    cout << "hello " << count << " " << block.cylinder_boxes.size() << endl; 
+                                    count++;
+                                }
+                                if (!del) {
+                                    for (const Box& box : block.cylinder_boxes) {
+                                        block.poly = box.add(block.poly);
+                                    }
+                                }
+                            } else {
+                                double i = block.select[0];
+                                double i_max = block.select[0]+block.select_size[0];
+                                if (block.select_size[0] < 0) {
+                                    swap(i,i_max);
+                                }
+                                double j = block.select[1];
+                                double j_max = block.select[1]+block.select_size[1];
+                                if (block.select_size[1] < 0) {
+                                    swap(j,j_max);
+                                }
+                                double k = block.select[2];
+                                double k_max = block.select[2]+block.select_size[2];
+                                if (block.select_size[2] < 0) {
+                                    swap(k,k_max);
+                                }
+                                i = min(block.select[0],block.select[0]+block.select_size[0]);
+                                j = min(block.select[1],block.select[1]+block.select_size[1]);
+                                k = min(block.select[2],block.select[2]+block.select_size[2]);
+                                std::array<double,3> size = {abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2])};
+                                Box box({i,i+size[0]},{j,j+size[1]},{k,k+size[2]});
+                                block.poly = box.del(block.poly);
+                                if (!del) {
+                                    block.poly = box.add(block.poly);
+                                }
                             }
                             for (const set<int>& face : block.poly.faces) {
                                 for (const int& edge_index : face) {
@@ -4053,7 +4928,7 @@ int main( int argc, char* args[] ) {
                                     cout << endl;
                                 }
                             }
-                            Polyhedron::RoundPointMeter rounder(meters);
+                            Polyhedron::RoundPointMeter rounder(block.meters);
                             block.poly.round_verts(rounder);
                             block.flip();
                             block.select[0] = block.select[0]+block.select_size[0]-((block.select_size[0] > 0) ? block.unit : 0);
@@ -4063,6 +4938,14 @@ int main( int argc, char* args[] ) {
                             block.select_size[1] = block.unit;
                             block.select_size[2] = block.unit;
                             break;
+                        } case SDLK_LSHIFT: {
+                            shift_down = false;   
+                            break;
+                        } case SDLK_LGUI: {
+                        } case SDLK_RGUI: {
+                            meta_down = false;
+                            break;
+                        }
                     }
                 }
             }
