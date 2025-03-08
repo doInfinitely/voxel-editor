@@ -280,7 +280,13 @@ class Polyhedron {
             }
         }
         vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
+        cout << "circuit_sizes ";
+        for (const vector<std::array<double,3>>& circuit : output) {
+            cout << circuit.size() << " ";
+        }
+        cout << endl;
         vector<std::array<double,3>>* exterior_circuit = Polyhedron::find_exterior_circuit(output);
+        cout << "NO_EXTERIOR_CIRCUIT1" << endl; 
         if (exterior_circuit != NULL) {
             set<vector<std::array<double,3>>> new_output;
             new_output.insert(*exterior_circuit);
@@ -340,6 +346,7 @@ class Polyhedron {
                 }
             }
         }
+        cout << "NO_EXTERIOR_CIRCUIT2" << endl; 
         delete exterior_circuit;
         return output;
     }
@@ -351,22 +358,20 @@ class Polyhedron {
         for (int i=0; i < 3; i++) {
             m(i,0) = points[1][i]-points[0][i];
         }
-        int c = 0;
         for (const std::array<double,3>& p : points) {
-            if (c > 1) {
-                VectorXd b(3);
-                for (int i=0; i < 3; i++) {
-                    b(i) = p[i]-points[0][i];
-                }
-                VectorXd x = m.colPivHouseholderQr().solve(b);
-                VectorXd b_prime = m*x;
-                for (int i=0; i < 3; i++) {
-                    if ( abs(b_prime(i)-b(i)) > 0.1*abs(b(i)) ) {
-                        return false;
-                    }
-                }
+            VectorXd b(3);
+            for (int i=0; i < 3; i++) {
+                b(i) = p[i]-points[0][i];
             }
-            c++;
+            VectorXd x = m.colPivHouseholderQr().solve(b);
+            VectorXd b_prime = m*x;
+            std::array<double,3> point_prime;
+            for (int i=0; i < 3; i++) {
+                point_prime[i] = b_prime(i)+points[0][i];
+            }
+            if (Polyhedron::distance(p, point_prime) > 0.000001) {
+                return false;
+            }
         }
         return true;
     }
@@ -539,26 +544,27 @@ class Polyhedron {
         p1 = Polyhedron::rotate({p1}, {0,angle[1],0})[0];
         angle[1] = -angle[1];
         angle[2] = -angle[2];
+        p1 = Polyhedron::rotate({{circuit[1][0]-circuit[0][0],circuit[1][1]-circuit[0][1],circuit[1][2]-circuit[0][2]}}, angle)[0];
         std::array<double,3> p2 = Polyhedron::rotate({{circuit[2][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
-        angle[0] = -atan2(circuit[2][2]-circuit[0][2],circuit[2][1]-circuit[0][1]);
+        angle[0] = -atan2(p2[2]-p1[2],p2[1]-p1[1]);
         std::array<double,3> start = {circuit[0][0],circuit[0][1],circuit[0][2]};
         for (std::array<double,3>& x : circuit) {
             for (int i = 0; i < 3; i++) {
                 x[i] -= start[i];
             }
-            cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
+            //cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
         }
-        cout << "make_planr" <<endl;
+        //cout << "make_planr" <<endl;
         vector<std::array<double,3>> output = Polyhedron::rotate(circuit, {0,angle[1],angle[2]});
         output = Polyhedron::rotate(output, {angle[0],0,0});
         for (std::array<double,3>& x : output) {
             x[2] = 0;
         }
-        cout << "[" << angle[0] << "," << angle[1] << "," << angle[2] << "] " << endl;
-        for (std::array<double,3>& x : output) {
-            cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
-        }
-        cout << "make_planar" <<endl;
+        //cout << "[" << angle[0] << "," << angle[1] << "," << angle[2] << "] " << endl;
+        //for (std::array<double,3>& x : output) {
+        //    cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
+        //}
+        //cout << "make_planar" <<endl;
         return output;
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
@@ -573,10 +579,11 @@ class Polyhedron {
             std::array<double,3> angle = {0,0,-atan2(planar[i][1]-planar[(i-1+planar.size())%planar.size()][1],planar[i][0]-planar[(i-1+planar.size())%planar.size()][0])};
             planar = Polyhedron::rotate(planar, angle);
             double theta = atan2(planar[(i+1)%planar.size()][1],planar[(i+1)%planar.size()][0]);
-            cout << theta/pi*180 << " ";
+            //cout << theta/pi*180 << " ";
             summa += theta;
         }
-        cout << endl;
+        //cout << endl;
+        //cout << "is_clockwise " << summa << endl;
         return summa < 0;
     }
     static set<vector<std::array<double,3>>> make_clockwise(set<vector<std::array<double,3>>> circuits) {
@@ -596,16 +603,16 @@ class Polyhedron {
         vector<std::array<double,3>> remainder;
     };
     static EarClip clip_ear(vector<std::array<double,3>> circuit) {
-        for (int i = 0; i < circuit.size(); i++) {
-            cout << "[" << circuit[i][0] << "," << circuit[i][1] << "," << circuit[i][2] << "] ";
-        }
-        cout << endl;
+        //for (int i = 0; i < circuit.size(); i++) {
+        //    cout << "[" << circuit[i][0] << "," << circuit[i][1] << "," << circuit[i][2] << "] ";
+        //}
+        //cout << endl;
         vector<std::array<double,3>> planar = Polyhedron::make_planar(circuit);
-        for (int i = 0; i < planar.size(); i++) {
-            cout << "[" << planar[i][0] << "," << planar[i][1] << "," << planar[i][2] << "] ";
-        }
-        cout << endl;
-        cout << Polyhedron::is_clockwise(planar) << endl;
+        //for (int i = 0; i < planar.size(); i++) {
+        //    cout << "[" << planar[i][0] << "," << planar[i][1] << "," << planar[i][2] << "] ";
+        //}
+        //cout << endl;
+        //cout << Polyhedron::is_clockwise(planar) << endl;
         if (!Polyhedron::is_clockwise(planar)) {
             std::reverse(planar.begin(),planar.end());
             std::reverse(circuit.begin(),circuit.end());
@@ -651,20 +658,22 @@ class Polyhedron {
     static vector<std::array<std::array<double,3>,3>> triangulate(vector<std::array<double,3>> circuit) {
         vector<std::array<std::array<double,3>,3>> output;
         vector<std::array<double,3>> remainder = circuit;
+        cout << "triangulate start" << endl;
         while (remainder.size() >3) {
-            EarClip ear_clip = Polyhedron::clip_ear(remainder);
-            remainder = ear_clip.remainder;
-            for (const std::array<double,3>& point : ear_clip.remainder) {
-                cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
-            }
-            cout << "; ";
             for (int i = 0; i < remainder.size();) {
                 if (Polyhedron::colinear(set<std::array<double,3>>{remainder[(i-1+remainder.size())%remainder.size()],remainder[i],remainder[(i+1)%remainder.size()]})) {
+                    cout << "colinear " << remainder[i][0] << " " << remainder[i][1] << " " << remainder[i][2] << endl;
                     remainder.erase(remainder.begin()+i);
                 } else {
                     i++;
                 }
             }
+            EarClip ear_clip = Polyhedron::clip_ear(remainder);
+            remainder = ear_clip.remainder;
+            //for (const std::array<double,3>& point : ear_clip.remainder) {
+            //    cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
+            //}
+            //cout << "; ";
             output.push_back(ear_clip.ear);
             for (const std::array<double,3>& point : ear_clip.ear) {
                 cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
@@ -672,6 +681,11 @@ class Polyhedron {
             cout << endl;
         }
         output.push_back({remainder[0],remainder[1],remainder[2]});
+        for (const std::array<double,3>& point : remainder) {
+            cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
+        }
+        cout << endl;
+        cout << "triangulate end" << endl;
         return output;
     }
     static vector<std::array<double,3>>* find_exterior_circuit(set<vector<std::array<double,3>>> circuits) {
@@ -690,6 +704,7 @@ class Polyhedron {
                             }
                         }
                         if (!any) {
+                            cout << "exterior circuit [" << point[0] << "," << point[1] << "," << point[2] << "] " << circuits_list[i].size() << endl;
                             double_break = true;
                             break;
                         }
@@ -998,7 +1013,7 @@ class Polyhedron {
             bool double_break = false;
             for (int i = 0; i < verts.size(); i++) {
                 for (int j = i+1; j < verts.size(); j++) {
-                    if (Polyhedron::distance(verts[i],verts[j]) < 0.001) {
+                    if (Polyhedron::distance(verts[i],verts[j]) < 0) {
                         verts.erase(verts.begin()+j);
                         for (int k = 0; k < edges.size();) {
                             set<int>::iterator it = edges[k].begin();
@@ -1436,6 +1451,9 @@ class Box {
         }
         return NULL;
     }
+    bool is_inside(std::array<double,3> point) const {
+        return point[0] >= x_min && point[0] <= x_max && point[1] >= y_min && point[1] <= y_max && point[2] >= z_min && point[2] <= z_max;
+    }
     bool intersect(set<std::array<double,3>> edge) const {
         set<std::array<double,3>>::iterator it = edge.begin();
         std::array<double,3> p1 = *(it);
@@ -1587,17 +1605,10 @@ class Box {
     };
     DelPreprocessOutput del_preprocess(Polyhedron poly, int face_index) const {
         set<int> face = poly.faces[face_index];
-        vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(poly.circuits(face_index));
+        set<vector<std::array<double,3>>> circuits = Polyhedron::make_clockwise(poly.circuits(face_index));
+        vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(circuits);
         DelPreprocessOutput output;
-        vector<std::array<double,3>> box;
         output.box_index = -1;
-        if ((*circuit)[0][0] == (*circuit)[1][0] && (*circuit)[0][0] == (*circuit)[2][0] && (*circuit)[0][0] >= x_min && (*circuit)[0][0] <= x_max) {
-            box = {{(*circuit)[0][0],y_min,z_min},{(*circuit)[0][0],y_max,z_min},{(*circuit)[0][0],y_max,z_max},{(*circuit)[0][0],y_min,z_max}};
-        } else if ((*circuit)[0][1] == (*circuit)[1][1] && (*circuit)[0][1] == (*circuit)[2][1] && (*circuit)[0][1] >= y_min && (*circuit)[0][1] <= y_max) {
-            box = {{x_min,(*circuit)[0][1],z_min},{x_max,(*circuit)[0][1],z_min},{x_max,(*circuit)[0][1],z_max},{x_min,(*circuit)[0][1],z_max}};
-        } else if ((*circuit)[0][2] == (*circuit)[1][2] && (*circuit)[0][2] == (*circuit)[2][2] && (*circuit)[0][2] >= z_min && (*circuit)[0][2] <= z_max) {
-            box = {{x_min,y_min,(*circuit)[0][2]},{x_max,y_min,(*circuit)[0][2]},{x_max,y_max,(*circuit)[0][2]},{x_min,y_max,(*circuit)[0][2]}};
-        }
         bool all = true;
         for (int i = 0; i < circuit->size(); i++) {
             if ((*circuit)[i][0] < x_min || (*circuit)[i][0] > x_max || (*circuit)[i][1] < y_min || (*circuit)[i][1] > y_max || (*circuit)[i][2] < z_min || (*circuit)[i][2] > z_max) {
@@ -1666,6 +1677,7 @@ class Box {
                                     for (const std::array<std::array<double,3>,3>& triangle : triangles) {
                                         if (Polyhedron::inside_triangle(triangle,projection)) {
                                             intersection++;
+                                            break;
                                         }
                                     }
                                 }
@@ -1685,6 +1697,14 @@ class Box {
                 return output; 
             }
         }
+        vector<std::array<double,3>> box;
+        if ((*circuit)[0][0] == (*circuit)[1][0] && (*circuit)[0][0] == (*circuit)[2][0] && (*circuit)[0][0] >= x_min && (*circuit)[0][0] <= x_max) {
+            box = {{(*circuit)[0][0],y_min,z_min},{(*circuit)[0][0],y_max,z_min},{(*circuit)[0][0],y_max,z_max},{(*circuit)[0][0],y_min,z_max}};
+        } else if ((*circuit)[0][1] == (*circuit)[1][1] && (*circuit)[0][1] == (*circuit)[2][1] && (*circuit)[0][1] >= y_min && (*circuit)[0][1] <= y_max) {
+            box = {{x_min,(*circuit)[0][1],z_min},{x_max,(*circuit)[0][1],z_min},{x_max,(*circuit)[0][1],z_max},{x_min,(*circuit)[0][1],z_max}};
+        } else if ((*circuit)[0][2] == (*circuit)[1][2] && (*circuit)[0][2] == (*circuit)[2][2] && (*circuit)[0][2] >= z_min && (*circuit)[0][2] <= z_max) {
+            box = {{x_min,y_min,(*circuit)[0][2]},{x_max,y_min,(*circuit)[0][2]},{x_max,y_max,(*circuit)[0][2]},{x_min,y_max,(*circuit)[0][2]}};
+        }
         vector<std::array<double,3>> intersections;
         vector<bool*> intersections_inside;
         for (const int& edge_index : poly.faces[face_index]) {
@@ -1695,8 +1715,10 @@ class Box {
         }
         for (int i = 0; i < circuit->size(); i++) {
             bool any = false;
+            std::array<double,3> p1 = (*circuit)[(i-1+circuit->size())%circuit->size()];
+            std::array<double,3> p2 = (*circuit)[i];
             for (const vector<std::array<double,3>>& y : poly.circuits(face_index)) {
-                if (find(y.begin(),y.end(),(*circuit)[(i-1+circuit->size())%circuit->size()]) != y.end() && find(y.begin(),y.end(),(*circuit)[i]) != y.end()) {
+                if (find(y.begin(),y.end(),p1) != y.end() && find(y.begin(),y.end(), p2) != y.end()) {
                     any = true;
                     break;
                 }
@@ -1704,8 +1726,6 @@ class Box {
             if (!any) {
                 continue;
             }
-            std::array<double,3> p1 = (*circuit)[(i-1+circuit->size())%circuit->size()];
-            std::array<double,3> p2 = (*circuit)[i];
             vector<std::array<double,3>> last_intersections;
             for (int j = 0; j < box.size(); j++) {
                 if (!Polyhedron::colinear((set<std::array<double,3>>){p1,p2,box[(j-1+box.size())%box.size()],box[j]})) {
@@ -1734,7 +1754,9 @@ class Box {
             cout << endl; 
             switch (last_intersections.size()) {
                 case 0:
-                    output.new_edges.insert(Polyhedron::round_edge({p1,p2}));
+                    if (!this->is_inside(p1) && !this->is_inside(p2)) {
+                        output.new_edges.insert(Polyhedron::round_edge({p1,p2}));
+                    }
                     break;
                 case 1:
                     if (x_min > p2[0] || p2[0] > x_max || y_min > p2[1] || p2[1] > y_max || z_min > p2[2] || p2[2] > z_max) {
@@ -1996,7 +2018,7 @@ class Box {
                     it = find(intersections_rounded.begin(),intersections_rounded.end(), Polyhedron::round_point(box[index]));
                     if (it != intersections_rounded.end()) {
                         inside2 = intersections_inside[std::distance(intersections_rounded.begin(),it)];
-                        break; 
+                        break;
                     }
                     index++;
                     index %= box.size();
@@ -2021,7 +2043,7 @@ class Box {
                     it = find(intersections_rounded.begin(),intersections_rounded.end(), Polyhedron::round_point(box[index]));
                     if (it != intersections_rounded.end()) {
                         inside4 = intersections_inside[std::distance(intersections_rounded.begin(),it)];
-                        break; 
+                        break;
                     }
                     index--;
                     index += box.size();
@@ -2039,7 +2061,7 @@ class Box {
                 }
                 if (components.size() > 1) {
                     is_border_path1 = false;
-                } 
+                }
                 components.clear();
                 for (const std::array<double,3>& x : path2) {
                     if (component_lookup.find(Polyhedron::round_point(x)) != component_lookup.end()) {
@@ -2048,7 +2070,7 @@ class Box {
                 }
                 if (components.size() > 1) {
                     is_border_path2 = false;
-                } 
+                }
                 if (path1[path1.size()-1] == path2[path2.size()-1] && is_border_path1 && is_border_path2) {
                     double distance1 = 0;
                     for (int j = 1; j < path1.size(); j++) {
@@ -2235,11 +2257,55 @@ class Box {
                     }
                 }
             }
-            for (int i = 0; i < circuit->size(); i++) {
-                vector<std::array<double,3>>::iterator it1 = find(poly.verts.begin(),poly.verts.end(),(*circuit)[(i-1+circuit->size())%circuit->size()]);
-                vector<std::array<double,3>>::iterator it2 = find(poly.verts.begin(),poly.verts.end(),(*circuit)[i]);
-                if (it1 != poly.verts.end() && it2 != poly.verts.end() && find(poly.edges.begin(),poly.edges.end(),set<int>{(int)std::distance(poly.verts.begin(),it1),(int)std::distance(poly.verts.begin(),it2)}) != poly.edges.end()) {
-                    output.new_edges.insert(Polyhedron::round_edge({(*circuit)[(i-1+circuit->size())%circuit->size()],(*circuit)[i]}));
+        }
+        
+        vector<std::array<double,3>>* new_circuit = Polyhedron::circuit_cut(Polyhedron::make_clockwise(del_circuit_helper(output.new_edges)));
+        std::array<double,3> center = {0,0,0};
+        for (const std::array<double,3>& x : box_old) {
+            center[0] += x[0]/box_old.size();
+            center[1] += x[1]/box_old.size();
+            center[2] += x[2]/box_old.size();
+        }
+        center = Polyhedron::round_point(center);
+        if (center[0] != x_min && center[0] != x_max && center[1] != y_min && center[1] != y_max && center[2] != z_min && center[2] != z_max) {
+            bool any = false;
+            for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*new_circuit)) {
+                if (Polyhedron::inside_triangle(triangle, center)) {
+                    any = true;
+                }
+            }
+            if (any) {
+                cout << "howdy " << center[0] << "," << center[1] << "," << center[2] <<endl;
+                for (int i = 0; i < box_old.size(); i++) {
+                    bool no_break = true;
+                    std::array<std::array<double,3>,2> edge1_array = {Polyhedron::round_point(box_old[(i-1+box_old.size())%box_old.size()]), Polyhedron::round_point(box_old[i])};
+                    for (const set<std::array<double,3>>& edge2 : output.new_edges) {
+                        if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(box_old[(i-1+box_old.size())%box_old.size()]))) {
+                            continue;
+                        } 
+                        if (!Polyhedron::point_on_segment(Polyhedron::round_edge(edge2), Polyhedron::round_point(box_old[i]))) {
+                            continue;
+                        }
+                        set<std::array<double,3>>::iterator it = edge2.begin();
+                        std::array<double,3> p1 = *(it);
+                        std::array<double,3> p2 = *(++it);
+                        PointDistanceComparator comp = PointDistanceComparator(p1);
+                        sort(edge1_array.begin(),edge1_array.end(),comp);
+                        if (Polyhedron::distance(p1,edge1_array[0])) {
+                            output.new_edges.insert(Polyhedron::round_edge({p1,edge1_array[0]}));
+                        }
+                        comp = PointDistanceComparator(p2);
+                        sort(edge1_array.begin(),edge1_array.end(),comp);
+                        if (Polyhedron::distance(p2,edge1_array[0])) {
+                            output.new_edges.insert(Polyhedron::round_edge({p2,edge1_array[0]}));
+                        }
+                        output.new_edges.erase(edge2);
+                        no_break = false;
+                        break;
+                    }
+                    if (no_break) {
+                        output.new_edges.insert(Polyhedron::round_edge({box_old[(i-1+box_old.size())%box_old.size()],box_old[i]}));   
+                    }
                 }
             }
         }
@@ -2489,7 +2555,8 @@ class Box {
                 bool any1 = false;
                 for (const std::array<double,3>& y : box) {
                     bool any2 = false;
-                    for (std::array<std::array<double,3>,3> triangle : Polyhedron::triangulate(*Polyhedron::find_exterior_circuit(poly.circuits(box_map[i])))) {
+                    vector<std::array<double,3>>* exterior_circuit = Polyhedron::find_exterior_circuit(poly.circuits(box_map[i]));
+                    for (std::array<std::array<double,3>,3> triangle : Polyhedron::triangulate(*exterior_circuit)) {
                         for (const std::array<double,3>& x : box) {
                             if (Polyhedron::inside_triangle(triangle,x)) {
                                 any2 = true;
@@ -2500,6 +2567,7 @@ class Box {
                             break;
                         }
                     }
+                    delete exterior_circuit;
                     if (!any2) {
                         any1 = true;
                         break; 
@@ -2672,9 +2740,18 @@ class Box {
             }
         }
         int size = faces.size();
+        
         for (int face_index = 0; face_index < size; face_index++) {
             circuits = Box::del_circuit_helper(faces[face_index]);
-            vector<std::array<double, 3>>* exterior_circuit = Polyhedron::find_exterior_circuit(circuits);
+            for (const vector<std::array<double,3>>& circuit : circuits) {
+                cout << "del circuit ";
+                for (const std::array<double,3>& point : circuit) {
+                    cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
+                }
+                cout << endl;
+            }
+            vector<std::array<double, 3>>* exterior_circuit = Polyhedron::find_exterior_circuit(Polyhedron::make_clockwise(circuits));
+            cout << "exterior circuit is null " << (exterior_circuit==NULL) << endl;
             if (circuits.size() > 1 && exterior_circuit == NULL) {
                 vector<vector<std::array<double,3>>> circuits_vector(circuits.begin(),circuits.end());
                 for (int i = 1; i < circuits_vector.size(); i++) {
@@ -3567,12 +3644,13 @@ class Block {
                 }
                 cout << endl;
             }
-            vector<std::array<double,3>>* points = Polyhedron::circuit_cut(poly.circuits(face_index));
+            vector<std::array<double,3>>* points = Polyhedron::circuit_cut(Polyhedron::make_clockwise(poly.circuits(face_index)));
             for (const std::array<double,3> point : *points) {
                 cout << " [" << point[0] << "," << point[1] << "," << point[2] << "] ";
             }
             cout << endl;
             polygons.insert(*points);
+            delete points;
         }
     }
     void draw(SDL_Renderer* gRenderer) {
@@ -3603,7 +3681,7 @@ class Block {
             min_select[i] = min(select[i],select[i]+select_size[i]);
             max_select[i] = max(select[i],select[i]+select_size[i]);
         }
-        double meter = 1;
+        /*double meter = 1;
         for (const double& x : meters) {
             meter *= x;
         }
@@ -3810,7 +3888,7 @@ class Block {
                     fill_polygon(gRenderer, path_2D);
                 }
             }
-        }
+        }*/
         SDL_SetRenderDrawColor( gRenderer, 0x00, 0x00, 0x00, 0xFF );
         for (const set<int>& edge : poly.edges) {
             std::array<double,2> p1 = camera.project(poly.verts[*(edge.begin())]);
@@ -4882,13 +4960,12 @@ int main( int argc, char* args[] ) {
                     switch( e.key.keysym.sym ) {
                         case SDLK_SPACE: {
                             block.space_down = false;
+                            Polyhedron::RoundPointMeter rounder(block.meters);
                             if (block.cylinder_tool) {
-                                int count = 0;
                                 for (const Box& box : block.cylinder_boxes) {
                                     block.poly = box.del(block.poly);
-                                    cout << "hello " << count << " " << block.cylinder_boxes.size() << endl; 
-                                    count++;
                                 }
+                                block.poly.round_verts(rounder);
                                 if (!del) {
                                     for (const Box& box : block.cylinder_boxes) {
                                         block.poly = box.add(block.poly);
@@ -4928,7 +5005,6 @@ int main( int argc, char* args[] ) {
                                     cout << endl;
                                 }
                             }
-                            Polyhedron::RoundPointMeter rounder(block.meters);
                             block.poly.round_verts(rounder);
                             block.flip();
                             block.select[0] = block.select[0]+block.select_size[0]-((block.select_size[0] > 0) ? block.unit : 0);
