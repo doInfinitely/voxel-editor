@@ -8,3 +8,7 @@ g++ -std=c++14 -I eigen/ -o voxel_editor voxel_editor.cpp `pkg-config --cflags -
 ```
 
 Eigen can be obtained from https://gitlab.com/libeigen/eigen
+
+```
+g++ -std=c++14 -I eigen/ -o intersect_polyhedron intersect_polyhedron.cpp `pkg-config --cflags --libs sdl2`
+```

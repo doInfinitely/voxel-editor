@@ -1668,66 +1668,6 @@ class Polyhedron {
         }
         vector<vector<std::array<double,3>>> output;
         if (ray[0] == ray[1]) {
-            vector<int> faces;
-            for (int face_index = 0; face_index < poly.faces.size(); face_index++) {
-                bool inside = false;
-                for (const int& edge_index : poly.faces[face_index]) {
-                    for (const int& index : poly.edges[edge_index]) {
-                        if (p1 == poly.verts[index]) {
-                            inside = true;
-                            break;
-                        }
-                    }
-                    if (inside) {
-                        break;
-                    }
-                }
-                if (inside) {
-                    faces.push_back(face_index);
-                }
-            }
-            for (const int& face_index : faces) {
-                vector<std::array<double,3>>* circuit1 = circuit_cut(poly.circuits(face_index));
-                vector<std::array<double,3>>* circuit2 =  circuit_cut(other_poly.circuits(face_path.back()));
-                CircuitIntersections circuit_intersections = intersect_circuits(*circuit1, *circuit2);
-                delete circuit1;
-                delete circuit2;
-                for (const set<std::array<double,3>>& edge : circuit_intersections.edges) {
-                    if (edge.find(p1) != edge.end()) {
-                        set<std::array<double,3>> temp = {p1};
-                        set<std::array<double,3>> difference;
-                        set_difference(edge.begin(), edge.end(), temp.begin(), temp.end(), std::inserter(difference, difference.begin()));
-                        std::array<double,3> p = *(difference.begin());
-                        for (int face_index2 = 0; face_index2 < other_poly.faces.size(); face_index2++) {
-                            bool visited = false;
-                            for (const int& face : face_path) {
-                                if (face_index2 == face) {
-                                    visited = true;
-                                }
-                            }
-                            bool any = false;
-                            vector<std::array<double,3>>* circuit = circuit_cut(other_poly.circuits(face_index2));
-                            for (const std::array<std::array<double,3>,3>& triangle : triangulate(*circuit)) {
-                                if (Polyhedron::inside_triangle(triangle, p)) {
-                                    any = true;
-                                    break;
-                                }
-                            }
-                            delete circuit;
-                            vector<int> new_face_path(face_path.begin(),face_path.end());
-                            new_face_path.push_back(face_index2);
-                            if (!visited && any) {
-                                for (vector<std::array<double,3>> x : Polyhedron::path_along_faces(p, p2, new_face_path, poly, other_poly)) {
-                                    vector<std::array<double,3>> new_path;
-                                    new_path.push_back(p1);
-                                    new_path.insert(new_path.end(), x.begin(), x.end());
-                                    output.push_back(new_path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             return output;
         }
         vector<RayIntersection> intersections = other_poly.project_ray_on_face_plane_and_intersect(face_path.back(), {p1, p2});
@@ -2030,7 +1970,11 @@ int main(int argc, char* argv[]) {
     ofstream output_file(filename3);
     std::array<vector<set<set<std::array<double,3>>>>,2> output = poly1.intersect(poly2);
     for (const vector<set<set<std::array<double,3>>>>& edge_sets : output) {
+        cout << "{" << endl;
         for (const set<set<std::array<double,3>>>& edge_set : edge_sets) {
+            if (!edge_set.size()) {
+                continue;
+            }
             for (const set<std::array<double,3>>& edge : edge_set) {
                 set<std::array<double,3>>::iterator it = edge.begin(); 
                 std::array<double,3> p1 = Polyhedron::round_point(*it);
@@ -2043,6 +1987,7 @@ int main(int argc, char* argv[]) {
                     cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
                     if (output_file.is_open()) {
                         output_file << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
+
                     }
                 }
                 cout << endl;
@@ -2055,7 +2000,7 @@ int main(int argc, char* argv[]) {
                 output_file << endl;
             }
         }
-        cout << endl;
+        cout << "}" << endl;
         if (output_file.is_open()) {
             output_file << endl;
         }
