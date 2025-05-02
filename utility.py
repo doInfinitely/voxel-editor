@@ -57,7 +57,7 @@ def remeter(meters, new_meter, precision=0.001):
         if x != 1 and abs(new_meter/x - round(new_meter/x)) <= precision:
             return meters
     return {x for x in meters if abs(x/new_meter - round(x/new_meter)) > precision}|set([new_meter])
-def distance(point1, point2):
+def distance(point1, point2=(0,0,0)):
     displacement = tuple(point2[i]-x for i,x in enumerate(point1))
     return sqrt(sum(x**2 for x in displacement))
 def dot(vector1, vector2):
