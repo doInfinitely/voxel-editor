@@ -12,6 +12,8 @@ import functools
 from scipy.spatial import ConvexHull
 from scipy.spatial._qhull import QhullError
 import subprocess
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
 
 def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
     def decorator(func):
@@ -55,11 +57,10 @@ class Polyhedron:
         circuits = set()
         if start is None:
             seen = set()
-            for edge in face:
-                if frozenset(self.verts[index] for index in self.edges[edge]) in seen:
+            for start in face:
+                if frozenset(self.verts[index] for index in self.edges[start]) in seen:
                     continue
                 path = []
-                start = edge
                 point = list(self.edges[start])[0]
                 temp = edge_lookup[point] - set([self.edges[start]])
                 for y in temp:
@@ -97,7 +98,7 @@ class Polyhedron:
             a = np.array([[float(points[1][i]-points[0][i])] for i in range(3)])
             b = np.array([float(p[i]-points[0][i]) for i in range(3)])
             x, res, rank, s = np.linalg.lstsq(a, b)
-            if not np.allclose(np.dot(a, x), b, rtol=rtol):
+            if not distance(np.dot(a, x), b) <= rtol:
                 return False
         return True
     def coplanar(points, rtol=0.0001):
@@ -133,11 +134,12 @@ class Polyhedron:
             b = np.array([p[i]-points[ind[0]][i] for i in range(3)])
             x, res, rank, s = np.linalg.lstsq(a.astype('float'), b.astype('float'))
             #print(a, b, x, res)
-            if not np.allclose(np.dot(a.astype('float'), x.astype('float')), b.astype('float'), rtol=rtol):
+            if not distance(np.dot(a.astype('float'), x.astype('float')), b.astype('float')) <= rtol:
                 return False
         return True
-    def point_on_segment(edge, point):
+    def point_on_segment(edge, point, rtol=0.0001):
         p1, p2 = edge
+        '''
         alpha = symbols("alpha")
         eqs = [Eq(alpha*p1[i]+(1-alpha)*p2[i], point[i]) for i in range(3)]
         solutions = solve(eqs, dict=True)
@@ -146,6 +148,14 @@ class Polyhedron:
             if alpha >= 0 and alpha <= 1:
                 return True
         return False
+        '''
+        a = np.array([[p1[i], p2[i]] for i in range(3)]+[[1,1]])
+        b = np.array(list(point)+[1])
+        x, res, rank, s = np.linalg.lstsq(a.astype('float'), b.astype('float'))
+        print(distance(point, tuple(x[0]*p1[i]+x[1]*p2[i] for i in range(3))), x[0]+x[1])
+        if round_float(x[0]) < 0 or round_float(x[1]) < 0 or not np.allclose(x[0]+x[1], 1, rtol=rtol) or distance(point, tuple(x[0]*p1[i]+x[1]*p2[i] for i in range(3))) > 0.0001:
+            return False
+        return True
     def intersect_segments(edge1, edge2):
         p1, p2 = edge1
         p3, p4 = edge2
@@ -637,6 +647,7 @@ class Polyhedron:
                 #output.append((x[0],tuple(x[0]*vec[i]+p1[i] for i in range(3))))
                 output.append((x[0],tuple(x[1]*edge[0][i]+x[2]*edge[1][i] for i in range(3))))
         return output
+    # For noncoplanar circuits
     def intersect_circuits(circuit1, circuit2):
         intersections = set()
         for i, p2 in enumerate(circuit1):
@@ -732,6 +743,7 @@ class Polyhedron:
                         point = list(edge1&edge2)[0]
                         edge3 = edge1^edge2
                         double_break = True
+                        break
                 if double_break:
                     print('double break', edge1, edge2, edge3)
                     break
@@ -758,8 +770,9 @@ class Polyhedron:
                     for face in to_merge:
                         faces.remove(face)
                         faces[-1].update(face)
-                    faces[-1].remove(edge)
-                    faces[-1].add(edge3)
+                        faces[-1].remove(edge)
+                    if edge3 is not None:
+                        faces[-1].add(edge3)
         '''
             if not double_break:
                 crossing = set()
@@ -784,7 +797,6 @@ class Polyhedron:
         #print("hull edges", hull_edges)
         poly = Polyhedron()
         poly.verts = [x for i,x in enumerate(points) if any(x in edge for edge in hull_edges)]
-        print('points', poly.verts)
         poly.edges = [frozenset([round_point(vert) for vert in poly.verts].index(round_point(point)) for point in edge) for edge in hull_edges]
         poly.faces = [frozenset(poly.edges.index(frozenset([round_point(vert) for vert in poly.verts].index(round_point(point)) for point in edge)) for edge in face) for face in faces]
         print([len(face) for face in poly.faces])
@@ -853,6 +865,126 @@ class Polyhedron:
                             output.extend([([p1]+x[0],x[1]) for x in path_along_faces(p, p2, face_path+[face_index2])])
                 return output
             return []
+        def path_around(points):
+            points = np.array(list(points))
+            n = len(points)
+
+            # Compute distance matrix
+            def create_distance_matrix(points):
+                dist_matrix = {}
+                for i in range(n):
+                    dist_matrix[i] = {}
+                    for j in range(n):
+                        if i == j:
+                            dist_matrix[i][j] = 0
+                        else:
+                            dist_matrix[i][j] = int(1000 * np.linalg.norm(points[i] - points[j]))  # scale to int
+                return dist_matrix
+
+            distance_matrix = create_distance_matrix(points)
+
+            # Create the routing index manager and model
+            manager = pywrapcp.RoutingIndexManager(n, 1, 0)  # 1 vehicle, depot = 0
+            routing = pywrapcp.RoutingModel(manager)
+
+            # Create a callback for the distance matrix
+            def distance_callback(from_index, to_index):
+                from_node = manager.IndexToNode(from_index)
+                to_node = manager.IndexToNode(to_index)
+                return distance_matrix[from_node][to_node]
+
+            transit_callback_index = routing.RegisterTransitCallback(distance_callback)
+            routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+
+            # Force a closed tour (cycle)
+            routing.AddDimension(
+                transit_callback_index,
+                0,  # no slack
+                1_000_000,  # max distance
+                True,  # start cumul to zero
+                'Distance'
+            )
+
+            # Solve the problem
+            search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+            search_parameters.first_solution_strategy = (
+                routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
+
+            solution = routing.SolveWithParameters(search_parameters)
+
+            # Extract solution
+            def get_ordered_points(solution, manager, routing, points):
+                index = routing.Start(0)
+                ordered_indices = []
+                while not routing.IsEnd(index):
+                    ordered_indices.append(manager.IndexToNode(index))
+                    index = solution.Value(routing.NextVar(index))
+                ordered_points = points[ordered_indices]
+                return ordered_points, ordered_indices
+
+            ordered_points, ordered_indices = get_ordered_points(solution, manager, routing, points)
+            print(ordered_indices)
+            return [tuple(float(y) for y in x) for x in ordered_points]
+
+        '''
+        def path_around(points, vert=None):
+            if vert is not None:
+                centroid = tuple(sum(x[i] for x in points)/len(points) for i in range(3))
+                vec0 = tuple(centroid[i]-vert[i] for i in range(3))
+                gamma = symbols("gamma")
+                eqs = [Eq(vec0[0]*vec0[1]+vec0[1]*-vec0[0]+gamma*vec0[2],0)]
+                solutions = solve(eqs, dict=True)
+                vec1 = (vec0[1], -vec0[0], solutions[0][gamma])
+                vec2 = cross3D(vec0, vec1)
+                vec1 = tuple(vec1[i]/distance(vec1) for i in range(3))
+                vec2 = tuple(vec2[i]/distance(vec2) for i in range(3))
+                projection = []
+                for point in points:
+                    alpha, beta, gamma = symbols("alpha beta gamma")
+                    eqs = [Eq(alpha*vec0[i]+point[i],beta*vec1[i]+gamma*vec2[i]) for i in range(3)]
+                    solutions = solve(eqs, dict=True)
+                    alpha = solutions[0][alpha]
+                    projection.append(tuple(alpha*vec0[i]+point[i] for i in range(3)))
+            else:
+                projection = list(points)
+            planar_projection = Polyhedron.make_planar(projection)
+            reverse_projection = dict(zip(planar_projection, points))
+            point = min(planar_projection)
+            path = []
+            rotated_mapping = {x:x for x in planar_projection}
+            reverse_mapping = {x:x for x in planar_projection}
+            angle = (0,0,0)
+            while (not len(path) or point != path[0]) and point is not None:
+                path.append(point)
+                keys = []
+                temp_keys = []
+                for key in rotated_mapping:
+                    keys.append(key)
+                    temp_keys.append(tuple(key[i]-reverse_mapping[path[-1]][i] for i in range(3)))
+                if len(path) > 1:
+                    angle = (0,0,angle[2]+atan2(reverse_mapping[path[-1]][1],reverse_mapping[path[-1]][0]))
+                    temp_keys = rotate(temp_keys, angle)
+                rotated_mapping = {temp_keys[i]:rotated_mapping[x] for i, x in enumerate(keys)}
+                reverse_mapping = {rotated_mapping[key]:key for key in rotated_mapping}
+                gift_wrap_angle_distance = []
+                gift_wrap = []
+                for key in rotated_mapping:
+                    print('key', key)
+                    if key == (0,0,0):
+                        continue
+                    if np.allclose(atan2(key[1],key[0]),pi, rtol=0.00001):
+                        continue
+                    gift_wrap_angle_distance.append((atan2(key[1],key[0]), distance(key)))
+                    gift_wrap.append(rotated_mapping[key])
+                maxi = ((-float("inf"),-float("inf")), None)
+                for i,x in enumerate(gift_wrap_angle_distance):
+                    print(path)
+                    if x > maxi[0] and gift_wrap[i] not in path:# and (maxi[0][0] == -float("inf") or round_float(maxi[0][0] > -round_float(pi/2))):
+                        maxi = (x, gift_wrap[i])
+                print('maxi', maxi)
+                point = maxi[1]
+            return [reverse_projection[x] for x in path]
+        '''
         edge_sets_per_poly = [[],[]]
         polys = [self, other]
         if use_cpp:
@@ -867,20 +999,30 @@ class Polyhedron:
                 for line in f:
                     if not(len(line.strip())):
                         blank = True
+                        print('heya')
                     elif line.strip() == "}":
                         new_poly = True
                     else:
                         if new_poly:
                             poly_index += 1
+                            if poly_index > 1:
+                                break
                             index = -1
+                            new_poly = False
                         if index == -1:
                             edge_sets_per_poly[poly_index].append(set())
                             index += 1
-                        blank_count = 0
-                        p1_text, p2_text = line.strip().split(" ")
-                        p1 = tuple(float(x) for x in p1_text.strip('[').strip(']').split(','))
-                        p2 = tuple(float(x) for x in p2_text.strip('[').strip(']').split(','))
-                        edge_sets_per_poly[poly_index][-1].add(frozenset([p1,p2]))
+                        elif blank:
+                            edge_sets_per_poly[poly_index].append(set())
+                            blank = False
+                        try:
+                            p1_text, p2_text = line.strip().split(" ")
+                            p1 = tuple(float(x) for x in p1_text.strip('[').strip(']').split(','))
+                            p2 = tuple(float(x) for x in p2_text.strip('[').strip(']').split(','))
+                            edge_sets_per_poly[poly_index][-1].add(frozenset([p1,p2]))
+                        except ValueError:
+                            pass
+            print(edge_sets_per_poly)
         else:
             for poly_index, poly in enumerate(polys):
                 new_edges = set()
@@ -935,64 +1077,18 @@ class Polyhedron:
                                     new_edges.add(frozenset([poly.verts[v_i1], poly.verts[v_i2]]))
                     print('leaves',leaves)
                     print(face_lookup)
+                    if not len(leaves) and root_in_poly:
+                        output = []
+                        new_poly = Polyhedron
+                        new_poly.verts = list(poly.verts)
+                        new_poly.edges = list(poly.edges)
+                        new_poly.faces = list(poly.faces)
+                        output.append(new_poly)
+                        #return output
                     #print(vert, nonleaves, leaves)
                     if len(leaves) > 2 and frozenset([round_point(x) for x in leaves]) not in seen_leaves:
                         seen_leaves.add(frozenset([round_point(x) for x in leaves]))
-                        leaf_centroid = tuple(sum(x[i] for x in leaves)/len(leaves) for i in range(3))
-                        vec0 = tuple(leaf_centroid[i]-vert[i] for i in range(3))
-                        gamma = symbols("gamma")
-                        eqs = [Eq(vec0[0]*vec0[1]+vec0[1]*-vec0[0]+gamma*vec0[2],0)]
-                        solutions = solve(eqs, dict=True)
-                        vec1 = (vec0[1], -vec0[0], solutions[0][gamma])
-                        vec2 = cross3D(vec0, vec1)
-                        vec1 = tuple(vec1[i]/distance(vec1) for i in range(3))
-                        vec2 = tuple(vec2[i]/distance(vec2) for i in range(3))
-                        #print(vec0, vec1, vec2)
-                        leaf_projection = []
-                        for leaf in leaves:
-                            alpha, beta, gamma = symbols("alpha beta gamma")
-                            eqs = [Eq(alpha*vec0[i]+leaf[i],beta*vec1[i]+gamma*vec2[i]) for i in range(3)]
-                            solutions = solve(eqs, dict=True)
-                            alpha = solutions[0][alpha]
-                            leaf_projection.append(tuple(alpha*vec0[i]+leaf[i] for i in range(3)))
-                        planar_leaf_projection = Polyhedron.make_planar(leaf_projection)
-                        reverse_projection = dict(zip(planar_leaf_projection, leaves))
-                        point = min(planar_leaf_projection)
-                        path = []
-                        rotated_mapping = {x:x for x in planar_leaf_projection}
-                        reverse_mapping = {x:x for x in planar_leaf_projection}
-                        angle = (0,0,0)
-                        while (not len(path) or point != path[0]) and point is not None:
-                            path.append(point)
-                            keys = []
-                            temp_keys = []
-                            for key in rotated_mapping:
-                                keys.append(key)
-                                temp_keys.append(tuple(key[i]-reverse_mapping[path[-1]][i] for i in range(3)))
-                            if len(path) > 1:
-                                angle = (0,0,angle[2]+atan2(reverse_mapping[path[-1]][1],reverse_mapping[path[-1]][0]))
-                                temp_keys = rotate(temp_keys, angle)
-                            rotated_mapping = {temp_keys[i]:rotated_mapping[x] for i, x in enumerate(keys)}
-                            reverse_mapping = {rotated_mapping[key]:key for key in rotated_mapping}
-                            gift_wrap_angle_distance = []
-                            gift_wrap = []
-                            for key in rotated_mapping:
-                                print('key', key)
-                                if key == (0,0,0):
-                                    continue
-                                if np.allclose(atan2(key[1],key[0]),pi, rtol=0.00001):
-                                    continue
-                                gift_wrap_angle_distance.append((atan2(key[1],key[0]), distance(key)))
-                                gift_wrap.append(rotated_mapping[key])
-                            maxi = ((-float("inf"),-float("inf")), None)
-                            for i,x in enumerate(gift_wrap_angle_distance):
-                                print(path)
-                                if x > maxi[0] and gift_wrap[i] not in path:# and (maxi[0][0] == -float("inf") or round_float(maxi[0][0] > -round_float(pi/2))):
-                                    maxi = (x, gift_wrap[i])
-                            print('maxi', maxi)
-                            point = maxi[1]
-                        print('path',path)
-                        path = [reverse_projection[x] for x in path]
+                        path = path_around(leaves)
                         print('path',path)
                         for index, p2 in enumerate(path):
                             p1 = path[index-1]
@@ -1011,23 +1107,108 @@ class Polyhedron:
                                 if not len(paths):
                                     new_edges.add(frozenset([p1,p2]))
                 #print('leaves', seen_leaves)
+                if len(new_edges) == 0 and all(other_poly.is_inface(vert) for vert in poly.verts):
+                    output = []
+                    new_poly = Polyhedron
+                    new_poly.verts = list(poly.verts)
+                    new_poly.edges = list(poly.edges)
+                    new_poly.faces = list(poly.faces)
+                    output.append(new_poly)
+                    #return output
                 edge_sets_per_poly[poly_index].append(new_edges)
+        print('edge sets per poly:', edge_sets_per_poly)
         polyhedrons_per_poly = [[],[]]
-        for poly_index, edge_sets in enumerate (edge_sets_per_poly):
+        poly = Polyhedron()
+        first = True
+        edges_per_poly = [set(), set()]
+        for poly_index, edge_sets in enumerate(edge_sets_per_poly):
+            print(edge_sets)
+            for edges in edge_sets:
+                edges_per_poly[poly_index] |= edges
+        for poly_index, edges in enumerate(edges_per_poly):
+            for edge in edges:
+                for point in edge:
+                    if point not in poly.verts:
+                        poly.verts.append(point)
+        points_per_poly = [{point for edge in edges for point in edge} for edges in edges_per_poly]
+        points = points_per_poly[0] | points_per_poly[1]
+        print('POINTS', points)
+        centroid = tuple(sum(point[i] for point in points) for i in range(3))
+        for poly_index in range(2):
+            for face in polys[poly_index].faces:
+                coplanar_points = set()
+                for point in points:
+                    if Polyhedron.coplanar({polys[poly_index].verts[index] for edge_index in face for index in polys[poly_index].edges[edge_index]}|{point}):
+                        coplanar_points.add(point)
+                if len(coplanar_points):
+                    '''
+                    update = True
+                    while update:
+                        update = False
+                        for x in coplanar_points:
+                            for y in coplanar_points:
+                                for z in coplanar_points:
+                                    if x != y and y != z and x != z and Polyhedron.colinear([x,y,z]):
+                                        dist, to_delete = max([(distance(x,y),z),(distance(y,z),x),(distance(x,z),y)])
+                                        coplanar_points.remove(to_delete)
+                                        update = True
+                                        break
+                                if update:
+                                    break
+                            if update:
+                                break
+                    '''
+                print(len(coplanar_points))
+                if len(coplanar_points) > 2:
+                    print(len(coplanar_points))
+                    path = path_around(coplanar_points)
+                    print('path around', path)
+                    for i,x in enumerate(path):
+                        poly.edges.append(frozenset([poly.verts.index(path[i-1]),poly.verts.index(x)]))
+        '''
+        new_edges = set()
+        for point1 in points_per_poly[0]:
+            for point2 in points_per_poly[1]:
+                if any(Polyhedron.coplanar({polys[i].verts[index] for edge_index in face for index in polys[i].edges[edge_index]}|{point1, point2}) for i in range(2) for face in polys[i].faces):
+                    new_edges.add(frozenset([point1, point2]))
+        for poly_index, edges in enumerate(edges_per_poly):
+            for edge in edges:
+                for point in edge:
+                    if point not in poly.verts:
+                        poly.verts.append(point)
+                poly.edges.append(frozenset(poly.verts.index(point) for point in edge))
+        for edge in new_edges:
+        #    point = tuple(sum(point[i] for point in edge)/2 for i in range(3))
+            poly.edges.append(frozenset(poly.verts.index(point) for point in edge))
+        for poly_index, edge_sets in enumerate(edge_sets_per_poly):
+            print(edge_sets)
+            if first:
+                first = False
+                #continue
             for index, edges in enumerate(edge_sets):
-                poly = Polyhedron()
-                points = {point for edge in edges for point in edge}
-                poly.verts = list(points)
-                poly.edges = [frozenset(poly.verts.index(point) for point in edge) for edge in edges]
-                points = np.array(poly.verts)
-                if len(poly.verts):
-                    try: 
-                        hull = ConvexHull(points)
-                        poly = Polyhedron.make_from_hull(hull, poly.verts)
-                    except QhullError:
-                        pass
-                #print('verts', poly.verts)
-                polyhedrons_per_poly[poly_index].append(poly)
+                for edge in edges:
+                    for point in edge:
+                        if point not in poly.verts:
+                            poly.verts.append(point)
+                    poly.edges.append(frozenset(poly.verts.index(point) for point in edge))
+        to_delete = set()
+        for index1, edge1 in enumerate(poly.edges):
+            edge1 = frozenset(poly.verts[index] for index in edge1)
+            for index2, edge2 in enumerate(poly.edges):
+                edge2 = frozenset(poly.verts[index] for index in edge2)
+                if edge1 != edge2:
+                    intersect = Polyhedron.intersect_segments(edge1, edge2)
+                    print(intersect)
+                    if intersect is not None:
+                        if intersect not in edge1:
+                            to_delete.add(index1)
+                        if intersect not in edge2:
+                            to_delete.add(index2)
+        for x in reversed(sorted(to_delete)):
+            del poly.edges[x]
+        '''
+        return poly
+        polyhedrons_per_poly[poly_index].append(poly)
         adj_lists = {(poly_index,index):[] for poly_index in range(2) for index in range(len(polyhedrons_per_poly[0]))}
         for index1, poly1 in enumerate (polyhedrons_per_poly[0]):
             for index2, poly2 in enumerate(polyhedrons_per_poly[1]):
@@ -1089,7 +1270,293 @@ class Polyhedron:
                     poly.faces.append(frozenset(poly.edges.index(edge) for edge in face))
         '''
         return output
+    def circuit_helper(edges, start=None, previous=None, current=None, path=None, old_circuits=None):
+        print(path, previous, current)
+        if path is not None:
+            for x in old_circuits:
+                if not len(set(path)-set(x)):
+                    return set()
+        edge_lookup = dict()
+        for edge in edges:
+            for point in edge:
+                if point not in edge_lookup:
+                    edge_lookup[point] = set()
+                edge_lookup[point].add(edge)
+        circuits = set()
+        if start is None:
+            seen = set()
+            for start in edges:
+                if start in seen:
+                    continue
+                path = []
+                point = list(start)[0]
+                temp = edge_lookup[point] - set([start])
+                for current in temp:
+                    if Polyhedron.coplanar(set(path + [point])):
+                        output = Polyhedron.circuit_helper(edges, start, start, current, path + [point], circuits)
+                        circuits.update(output)
+                        for circuit in output:
+                            for i,x in enumerate(circuit):
+                                seen.add(frozenset([circuit[i-1],x]))
+        else:
+            if current == start:
+                return {tuple(path)}
+            point = list(current - previous)[0]
+            if point in path:
+                return set()
+            previous = current
+            temp = list(edge_lookup[point]-set([previous]))
+            for current in temp:
+                if Polyhedron.coplanar(set(path + [point])):
+                    circuits.update(Polyhedron.circuit_helper(edges, start, previous, current, path + [point], old_circuits|circuits))
+        circuits_list = list(circuits)
+        for i,x in enumerate(circuits_list):
+            for j,y in enumerate(circuits_list[i+1:]):
+                if not len(set(x)-set(y)):
+                    y_r = tuple(reversed(y))
+                    if (y[y.index(x[0]):]+y[:y.index(x[0])])[:len(x)] == x or (y_r[y_r.index(x[0]):]+y_r[:y_r.index(x[0])])[:len(x)] == x:
+                        if y in circuits:
+                            circuits.remove(y)
+        return circuits
+    def subtract(self, other, use_cpp=True):
+        print('hello', len(other.faces))
+        new_poly = Polyhedron()
+        new_poly.verts = list(self.verts)
+        new_poly.edges = list(self.edges)
+        new_poly.faces = list(self.faces)
+        intersections = [self.intersect(other, use_cpp)]
+        new_edges = set()
+        for poly in intersections:
+            for edge_index1, edge1 in enumerate(poly.edges):
+                edge1 = frozenset(poly.verts[index] for index in edge1)
+                for edge_index2, edge2 in enumerate(new_poly.edges):
+                    edge2 = frozenset(new_poly.verts[index] for index in edge2)
+                    print(edge1, edge2, [Polyhedron.point_on_segment(edge2, point) for point in edge1])
+                    for point in edge1:
+                        if not Polyhedron.point_on_segment(edge2, point):
+                            break
+                    else:
+                        p1, p2 = edge2
+                        del new_poly.edges[edge_index2]
+                        faces = [face_index for face_index, face in enumerate(new_poly.faces) if edge_index2 in face]
+                        for face_index, face in enumerate(new_poly.faces):
+                            new_poly.faces[face_index] = frozenset(edge_index-1 if edge_index > edge_index2 else edge_index for edge_index in face if edge_index != edge_index2)
+                        edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
+                        if distance(edge3[0],edge3[1]) > 0:
+                            for point in edge3:
+                                if point not in new_poly.verts:
+                                    new_poly.verts.append(point)
+                            edge3 = frozenset(new_poly.verts.index(point) for point in edge3)
+                            if edge3 not in new_poly.edges:
+                                new_poly.edges.append(edge3)
+                                for face_index in faces:
+                                    new_poly.faces[face_index] |= frozenset([len(new_poly.edges)-1])
+                            else:
+                                for face_index in faces:
+                                    new_poly.faces[face_index] |= frozenset([new_poly.edges.index(edge3)])
+                        edge3 = [p2, sorted([(distance(p2,x),x) for x in edge1])[0][1]]
+                        if distance(edge3[0],edge3[1]) > 0:
+                            for point in edge3:
+                                if point not in new_poly.verts:
+                                    new_poly.verts.append(point)
+                            edge3 = frozenset(new_poly.verts.index(point) for point in edge3)
+                            if edge3 not in new_poly.edges:
+                                new_poly.edges.append(edge3)
+                                for face_index in faces:
+                                    new_poly.faces[face_index] |= frozenset([len(new_poly.edges)-1])
+                            else:
+                                for face_index in faces:
+                                    new_poly.faces[face_index] |= frozenset([new_poly.edges.index(edge3)])
+                        break
+                else:
+                    for point in edge1:
+                        if point not in new_poly.verts:
+                            new_poly.verts.append(point)
+                    new_edges.add(edge1)
+                    edge1 = list(edge1)
+                    new_poly.edges.append(frozenset([new_poly.verts.index(edge1[0]), new_poly.verts.index(edge1[1])]))
+        print('new_edges', new_edges)
+        print("circuits",Polyhedron.circuit_helper(new_edges), len(new_poly.faces))
+        for circuit in Polyhedron.circuit_helper(new_edges):
+            new_face = set()
+            for i,p2 in enumerate(circuit):
+                p1 = circuit[i-1]
+                p1 = new_poly.verts.index(p1)
+                p2 = new_poly.verts.index(p2)
+                new_poly.edges.append(frozenset([p1,p2]))
+                #edge_index = new_poly.edges.index(frozenset([p1,p2]))
+                new_face.add(len(new_poly.edges)-1)
+            new_poly.faces.append(frozenset(new_face))
+        for edge in new_edges:
+            for face_index, face in enumerate(new_poly.faces):
+                for point in edge:
+                    if all(point != new_poly.verts[index] for edge_index in face for index in new_poly.edges[edge_index]):
+                        break
+                else:
+                    edge = frozenset([new_poly.verts.index(point) for point in edge])
+                    new_poly.faces[face_index] |= frozenset([new_poly.edges.index(edge)])
+        edge_lookup = dict()
+        for index, vert in enumerate(new_poly.verts):
+            edge_lookup[vert] = set()
+            for edge_index, edge in enumerate(new_poly.edges):
+                if index in edge:
+                    edge_lookup[vert].add(edge_index)
+        for face_index, face in enumerate(new_poly.faces):
+            circuits = new_poly.circuits(face_index)
+            exterior_circuit = Polyhedron.find_exterior_circuit(circuits)
+            if exterior_circuit is None:
+                components = [{circuit} for circuit in circuits]
+                update = True
+                while update:
+                    update = False
+                    for index1, component1 in enumerate(components):
+                        for index2, component2 in enumerate(components):
+                            if component1 != component2 and Polyhedron.find_exterior_circuit(component1|component2) is not None:
+                                component1 |= component2
+                                del components[index2]
+                                update = True
+                                break
+                        if update:
+                            break
+                for index, component in enumerate(components):
+                    new_face = set()
+                    for circuit in component:
+                        for i,p2 in enumerate(circuit):
+                            p1 = circuit[i-1]
+                            new_face.add(list(edge_lookup[p1]&edge_lookup[p2])[0])
+                    if index == 0:
+                        new_poly.faces[face_index] = new_face
+                    else:
+                        new_poly.faces.append(frozenset(new_face))
+        for point, edges in edge_lookup.items():
+            if not(len(edges)):
+                index = new_poly.verts.index(point)
+                del new_poly.verts[index]
+                for edge_index, edge in enumerate(new_poly.edges):
+                    new_poly.edges[edge_index] = frozenset(vert_index-1 if vert_index > index else vert_index for vert_index in edge)
+        return new_poly
+    def add(self, other, use_cpp=True):
+        new_poly1 = Polyhedron()
+        new_poly1.verts = list(other.verts)
+        new_poly1.edges = list(other.edges)
+        new_poly1.faces = list(other.faces)
+        new_poly2 = Polyhedron()
+        new_poly2.verts = list(self.verts)
+        new_poly2.edges = list(self.edges)
+        new_poly2.faces = list(self.faces)
+        intersections = [self.intersect(other, use_cpp)]
+        for poly in intersections:
+            new_poly1 = new_poly1.subtract(poly, use_cpp)
+        new_edges = set()
+        for edge_index1, edge1 in enumerate(new_poly1.edges):
+            edge1 = frozenset(new_poly1.verts[index] for index in edge1)
+            for edge_index2, edge2 in enumerate(new_poly2.edges):
+                edge2 = frozenset(new_poly2.verts[index] for index in edge2)
+                for point in edge1:
+                    if not Polyhedron.point_on_segment(edge2, point):
+                        break
+                else:
+                    p1, p2 = edge2
+                    del new_poly2.edges[edge_index2]
+                    faces = [face_index for face_index, face in enumerate(new_poly2.faces) if edge_index2 in face]
+                    for face_index, face in enumerate(new_poly2.faces):
+                        new_poly2.faces[face_index] = frozenset(edge_index-1 if edge_index > edge_index2 else edge_index for edge_index in face if edge_index != edge_index2)
+                    edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
+                    if distance(edge3[0],edge3[1]) > 0:
+                        for point in edge3:
+                            if point not in new_poly2.verts:
+                                new_poly2.verts.append(point)
+                        edge3 = frozenset(new_poly2.verts.index(point) for point in edge3)
+                        if edge3 not in new_poly2.edges:
+                            new_poly2.edges.append(edge3)
+                            for face_index in faces:
+                                new_poly2.faces[face_index] |= frozenset([len(new_poly2.edges)-1])
+                        else:
+                            for face_index in faces:
+                                new_poly2.faces[face_index] |= frozenset([new_poly2.edges.index(edge3)])
+                    edge3 = [p2, sorted([(distance(p2,x),x) for x in edge1])[0][1]]
+                    if distance(edge3[0],edge3[1]) > 0:
+                        for point in edge3:
+                            if point not in new_poly2.verts:
+                                new_poly2.verts.append(point)
+                        edge3 = frozenset(new_poly2.verts.index(point) for point in edge3)
+                        if edge3 not in new_poly2.edges:
+                            new_poly2.edges.append(edge3)
+                            for face_index in faces:
+                                new_poly2.faces[face_index] |= frozenset([len(new_poly2.edges)-1])
+                        else:
+                            for face_index in faces:
+                                new_poly2.faces[face_index] |= frozenset([new_poly2.edges.index(edge3)])
+                    break
+            else:
+                for point in edge1:
+                    if point not in new_poly2.verts:
+                        new_poly2.verts.append(point)
+                new_edges.add(edge1)
+                edge1 = list(edge1)
+                new_poly2.edges.append(frozenset([new_poly2.verts.index(edge1[0]), new_poly2.verts.index(edge1[1])]))
+        print('new_edges', new_edges)
+        print("circuits",Polyhedron.circuit_helper(new_edges), len(new_poly2.faces))
+        for circuit in Polyhedron.circuit_helper(new_edges):
+            new_face = set()
+            for i,p2 in enumerate(circuit):
+                p1 = circuit[i-1]
+                p1 = new_poly2.verts.index(p1)
+                p2 = new_poly2.verts.index(p2)
+                edge_index = new_poly2.edges.index(frozenset([p1,p2]))
+                new_face.add(edge_index)
+            new_poly2.faces.append(frozenset(new_face))
+        for edge in new_edges:
+            for face_index, face in enumerate(new_poly2.faces):
+                for point in edge:
+                    if all(point != new_poly2.verts[index] for edge_index in face for index in new_poly2.edges[edge_index]):
+                        break
+                else:
+                    edge = frozenset([new_poly2.verts.index(point) for point in edge])
+                    new_poly2.faces[face_index] |= frozenset([new_poly2.edges.index(edge)])
+        edge_lookup = dict()
+        for index, vert in enumerate(new_poly2.verts):
+            edge_lookup[vert] = set()
+            for edge_index, edge in enumerate(new_poly2.edges):
+                if index in edge:
+                    edge_lookup[vert].add(edge_index)
+        for face_index, face in enumerate(new_poly2.faces):
+            circuits = new_poly2.circuits(face_index)
+            exterior_circuit = Polyhedron.find_exterior_circuit(circuits)
+            if exterior_circuit is None:
+                components = [{circuit} for circuit in circuits]
+                update = True
+                while update:
+                    update = False
+                    for index1, component1 in enumerate(components):
+                        for index2, component2 in enumerate(components):
+                            if component1 != component2 and Polyhedron.find_exterior_circuit(component1|component2) is not None:
+                                component1 |= component2
+                                del components[index2]
+                                update = True
+                                break
+                        if update:
+                            break
+                for index, component in enumerate(components):
+                    new_face = set()
+                    for circuit in component:
+                        for i,p2 in enumerate(circuit):
+                            p1 = circuit[i-1]
+                            new_face.add(list(edge_lookup[p1]&edge_lookup[p2])[0])
+                    if index == 0:
+                        new_poly2.faces[face_index] = new_face
+                    else:
+                        new_poly2.faces.append(frozenset(new_face))
+        for point, edges in edge_lookup.items():
+            if not(len(edges)):
+                index = new_poly2.verts.index(point)
+                del new_poly2.verts[index]
+                for edge_index, edge in enumerate(new_poly2.edges):
+                    new_poly2.edges[edge_index] = frozenset(vert_index-1 if vert_index > index else vert_index for vert_index in edge)
+        print(len(intersections))
+        return new_poly2
 
+                        
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
     points.extend([(p[0],p[1],1) for p in points])
@@ -1112,24 +1579,35 @@ def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
 if __name__=="__main__":
     #poly1 = get_cube(factors=2, angles=(pi/4,pi/4,pi/4))
     #poly2 = get_cube((1,1,1), factors=2)
-
+    poly1 = get_cube(factors=2, angles=(pi/3,pi/3,pi/3))
+    #poly2 = get_cube((1,1,1), factors=2)
     #poly1.dump('poly1.ply')
     #poly2.dump('poly2.ply')
     #poly1 = get_cube(factors=2, angles=(pi/6,pi/6,pi/6))
     #poly2 = get_cube((1,1,1), factors=2)
+    #poly1 = get_cube(factors=2, angles=(pi/5,pi/5,pi/5))
+    #poly2 = get_cube((1,1,1), factors=2)
     #poly1 = get_cube()
     #poly2 = get_cube((1.5, 1.5, 0), factors=3)
-    #poly1 = get_cube(factors=(1,1,5), angles=(pi/10,pi/10,pi/10))
+    poly2 = get_cube(factors=(1,1,5), angles=(pi/10,pi/10,pi/10))
     #poly2 = get_cube((0,0,0), factors=3)
     #poly1 = get_cube(factors=(1,1,5))
     #poly2 = get_cube((0,0,0), factors=3)
-    poly1 = get_cube(factors=5)
-    poly2 = get_cube((1,1,2), factors=2)
+    #poly1 = get_cube(factors=5)
+    #poly2 = get_cube((1,1,2), factors=2)
+    #poly1 = get_cube(factors=2)
+    #poly2 = get_cube(factors=5)
+    #poly1 = get_cube()
+    #poly1 = poly1.add(get_cube((1,0,0)))
+    #poly1 = poly1.add(get_cube((0,1,0)))
+    #poly3 = poly1.subtract(get_cube((0,0,1),factors=4))
+    poly3 = poly1.intersect(poly2, use_cpp=True)
     print([vert for vert in poly1.verts])
     print([vert for vert in poly2.verts])
 
     
-    intersections = poly1.intersect(poly2, False)
+    intersections = poly1.intersect(poly2, True)
+    #poly3 = poly1.add(poly2, True)
     import pygame
     camera = Camera()
     camera.zoom = 100
@@ -1202,6 +1680,15 @@ if __name__=="__main__":
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 #print(p1,p2)
                 pygame.draw.line(screen, "blue", p1, p2)
+        for edge in poly3.edges:
+            p1, p2 = tuple(poly3.verts[index] for index in edge)
+            p1, p2 = camera.project(p1), camera.project(p2)
+            if p1 and p2:
+                p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
+                p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
+                #print(p1,p2)
+                pygame.draw.line(screen, "white", p1, p2)
+        '''
         for poly in intersections:
             for edge in poly.edges:
                 p1, p2 = [poly.verts[index] for index in edge]
@@ -1211,6 +1698,7 @@ if __name__=="__main__":
                     p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                     #print(p1,p2)
                     pygame.draw.line(screen, "white", p1, p2)
+        '''
         '''
         for edge in hull_edges:
             p1, p2 = edge

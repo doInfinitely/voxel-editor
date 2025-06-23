@@ -196,20 +196,11 @@ class Polyhedron {
         set<set<int>> temp = (edge_lookup[point]);
         temp.erase(edges[previous]);
         for (const set<int>& y : temp) {
-            set<std::array<double,3>> union_set;
-            for (const std::array<double,3>& x : path) {
-                union_set.insert(Polyhedron::round_point(x));
-            }
-            for (const int& x : y) {
-                union_set.insert(Polyhedron::round_point(verts[x]));
-            }
-            if (Polyhedron::coplanar(union_set)) {
-                vector<set<int>>::iterator it = find(edges.begin(),edges.end(),y);
-                current = std::distance(edges.begin(), it);
-                old_circuits.insert(output.begin(),output.end());
-                set<vector<std::array<double,3>>> intermediate = this->circuits(face_index, start, previous, current, path, old_circuits);
-                output.insert(intermediate.begin(),intermediate.end());
-            }
+            vector<set<int>>::iterator it = find(edges.begin(),edges.end(),y);
+            current = std::distance(edges.begin(), it);
+            old_circuits.insert(output.begin(),output.end());
+            set<vector<std::array<double,3>>> intermediate = this->circuits(face_index, start, previous, current, path, old_circuits);
+            output.insert(intermediate.begin(),intermediate.end());
         }
         vector<vector<std::array<double,3>>> output_list(output.begin(),output.end());
         for (int i = 0; i < output_list.size(); i++) {
@@ -552,8 +543,13 @@ class Polyhedron {
         b(3) = 1;
         VectorXd x = m.colPivHouseholderQr().solve(b);
         VectorXd b_prime = m*x;
-        if (x(0) >= 0 && x(1) >= 0 && x(2) >= 0 && x(3) >= 0 && x(3) <= 1) {    
-            Polyhedron::TriangleIntersection* triangle_intersection = new Polyhedron::TriangleIntersection();
+        std::array<double,3> point_prime;
+        for (int i = 0; i < 3; i++) {
+            point_prime[i] = b_prime(i);
+        }
+        //cout << "triangle intersect " << round_float(x(0)) << " " << round_float(x(1)) << " " << round_float(x(2)) << " " << round_float(x(3)) << endl;
+        if (round_float(x(0)) >= 0 && round_float(x(1)) >= 0 && round_float(x(2)) >= 0 && round_float(x(3)) >= 0 && round_float(x(3)) <= 1 && Polyhedron::distance(p1, point_prime) < 0.000001) {    
+            Polyhedron::TriangleIntersection* triangle_intersection = new TriangleIntersection();
             triangle_intersection->alpha = x(3);
             for (int i = 0; i < 3; i++) {
                 triangle_intersection->point[i] = x(3)*p2[i]+(1-x(3))*p1[i];
@@ -1052,11 +1048,14 @@ class Polyhedron {
     };
     bool is_inface(std::array<double,3> point) {
         for (int face_index = 0; face_index < faces.size(); face_index++) {
-            for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*Polyhedron::circuit_cut(this->circuits(face_index)))) {
+            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(this->circuits(face_index));
+            for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
                 if (Polyhedron::inside_triangle(triangle, point)) {
+                    delete circuit;
                     return true;
                 }
             }
+            delete circuit;
         }
         return false;
     }
@@ -1725,6 +1724,7 @@ class Polyhedron {
         polys[0] = *this;
         polys[1] = other;
         for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
+            set<set<std::array<double,3>>> new_edges;
             Polyhedron poly = polys[poly_index];
             Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
             set<set<std::array<double,3>>> seen_edges;
@@ -1732,16 +1732,15 @@ class Polyhedron {
             set<set<std::array<double,3>>> seen_leaves;
             for (int vert_index = 0; vert_index < poly.verts.size(); vert_index++) {
                 std::array<double,3> vert = poly.verts[vert_index];
-                set<set<std::array<double,3>>> new_edges;
-                if (seen_verts.find(vert_index) != seen_verts.end()) {
-                    continue;
-                }
+                //if (seen_verts.find(vert_index) != seen_verts.end()) {
+                //    continue;
+                //}
                 if (other_poly.is_inface(vert)) {
                     continue;
                 }
                 set<std::array<double,3>> leaves;
                 bool root_in_poly = other_poly.is_inside(vert);
-                cout << root_in_poly << " " << vert[0] << "," << vert[1] << "," << vert[2] << endl;
+                cout << "root in poly " << root_in_poly << " " << vert[0] << "," << vert[1] << "," << vert[2] << endl;
                 std::queue<int> q;
                 q.push(vert_index);
                 map<std::array<double,3>,set<int>> face_lookup;
@@ -1763,9 +1762,10 @@ class Polyhedron {
                         set_difference(edge.begin(), edge.end(), temp.begin(), temp.end(), std::inserter(difference, difference.begin()));
                         int v_i2 = *(difference.begin());
                         vector<FaceIntersection> intersects = other_poly.face_intersect({poly.verts[v_i1], poly.verts[v_i2]});
+			cout << "intersects size " << intersects.size() << endl;
                         if (intersects.size()) {
                             sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
-                            //cout << "alpha " << intersects[0].alpha << endl;
+                            cout << "alpha " << intersects[0].alpha << endl;
                             leaves.insert(intersects[0].point);
                             for (int i = 0; i < intersects.size(); i++) {
                                 if (Polyhedron::round_float(intersects[i].alpha) == Polyhedron::round_float(intersects[0].alpha)) {
@@ -1776,10 +1776,11 @@ class Polyhedron {
                             }
                             if (root_in_poly) {
                                 new_edges.insert({poly.verts[v_i1], intersects[0].point});
+				cout << "point 1 " << poly.verts[1][0] << "," << poly.verts[1][1] << "," << poly.verts[1][2] << endl; 
                             } else {
                                 for (int i = 1; i < intersects.size(); i++) {
                                     if (round_float(intersects[i].alpha) > round_float(intersects[0].alpha)) {
-                                        //cout << intersects[i].alpha << " " << intersects[0].alpha << endl;
+                                        cout << intersects[i].alpha << " " << intersects[0].alpha << endl;
                                         new_edges.insert({intersects[0].point, intersects[i].point});
                                         break;
                                     }
@@ -1793,6 +1794,19 @@ class Polyhedron {
                         }
                     }
                 }
+                /*
+                cout << "leaves size " << leaves.size() << " " << root_in_poly << endl;
+		        if (!leaves.size() && root_in_poly) {
+		            output[poly_index].push_back(set<set<std::array<double,3>>>());
+                    for (const set<int>& edge : poly.edges) {
+                        set<int>::iterator it = edge.begin();
+                        int p_i1 = *it;
+                        it++;
+                        int p_i2 = *it;
+                        output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
+                    }
+                    //return output;
+		        }*/
                 set<std::array<double,3>> rounded_leaves;
                 for (const std::array<double,3>& leaf : leaves) {
                     cout << "[" << leaf[0] << "," << leaf[1] << "," << leaf[2] << "] ";
@@ -1943,9 +1957,54 @@ class Polyhedron {
                         }
                     }
                 }
-                output[poly_index].push_back(new_edges);
             }
+            bool all = true;
+            for (const std::array<double,3>& vert : poly.verts) {
+                if (!other_poly.is_inface(vert)) {
+                    all = false;
+                    break;
+                }
+            }
+            cout << "new edges " << new_edges.size() << " " << all << endl;
+            if (!new_edges.size() && all) {
+                output[0].clear();
+                output[1].clear();
+                output[poly_index].push_back(set<set<std::array<double,3>>>());
+                for (const set<int>& edge : poly.edges) {
+                    set<int>::iterator it = edge.begin();
+                    int p_i1 = *it;
+                    it++;
+                    int p_i2 = *it;
+                    output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
+                }
+                //return output;
+            }
+            output[poly_index].push_back(new_edges);
         }
+        /*
+        if (!output[0].size() && !output[1].size()) {
+            for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
+                Polyhedron poly = polys[poly_index];
+                Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
+                bool all = true;
+                for (const std::array<double,3>& point : poly.verts) {
+                    cout << other_poly.is_inface(point) << endl;
+                    if (!other_poly.is_inface(point)) {
+                        all = false;
+                    }
+                }
+                if (all) {
+			        output[poly_index].push_back(set<set<std::array<double,3>>>());
+                    for (const set<int>& edge : poly.edges) {
+                        set<int>::iterator it = edge.begin();
+                        int p_i1 = *it;
+                        it++;
+                        int p_i2 = *it;
+                        output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
+                    }
+                }
+            }
+        }*/
         return output;
     }
 };
@@ -1971,11 +2030,19 @@ int main(int argc, char* argv[]) {
     std::array<vector<set<set<std::array<double,3>>>>,2> output = poly1.intersect(poly2);
     for (const vector<set<set<std::array<double,3>>>>& edge_sets : output) {
         cout << "{" << endl;
+	    if (output_file.is_open()) {
+	        output_file << "{" << endl;
+        }
         for (const set<set<std::array<double,3>>>& edge_set : edge_sets) {
             if (!edge_set.size()) {
                 continue;
             }
+            set<set<std::array<double,3>>> seen_edges;
             for (const set<std::array<double,3>>& edge : edge_set) {
+                if (seen_edges.find(Polyhedron::round_edge(edge)) != seen_edges.end()) {
+                    continue;
+                }
+                seen_edges.insert(Polyhedron::round_edge(edge));
                 set<std::array<double,3>>::iterator it = edge.begin(); 
                 std::array<double,3> p1 = Polyhedron::round_point(*it);
                 it++;
@@ -2002,7 +2069,7 @@ int main(int argc, char* argv[]) {
         }
         cout << "}" << endl;
         if (output_file.is_open()) {
-            output_file << endl;
+            output_file << "}" << endl;
         }
     }
     return 0;
