@@ -1724,6 +1724,27 @@ class Polyhedron {
         polys[0] = *this;
         polys[1] = other;
         for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
+            Polyhedron poly = polys[poly_index];
+            Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
+            bool all = true;
+            for (const std::array<double,3>& point : poly.verts) {
+                if (!other_poly.is_inside(point)) {
+                    all = false;
+                }
+            }
+            if (all) {
+                output[poly_index].push_back(set<set<std::array<double,3>>>());
+                for (const set<int>& edge : poly.edges) {
+                    set<int>::iterator it = edge.begin();
+                    int p_i1 = *it;
+                    it++;
+                    int p_i2 = *it;
+                    output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
+                }
+		return output;
+            }
+        }
+        for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             set<set<std::array<double,3>>> new_edges;
             Polyhedron poly = polys[poly_index];
             Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
@@ -1794,7 +1815,6 @@ class Polyhedron {
                         }
                     }
                 }
-                /*
                 cout << "leaves size " << leaves.size() << " " << root_in_poly << endl;
 		        if (!leaves.size() && root_in_poly) {
 		            output[poly_index].push_back(set<set<std::array<double,3>>>());
@@ -1805,8 +1825,8 @@ class Polyhedron {
                         int p_i2 = *it;
                         output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
                     }
-                    //return output;
-		        }*/
+                    return output;
+		        }
                 set<std::array<double,3>> rounded_leaves;
                 for (const std::array<double,3>& leaf : leaves) {
                     cout << "[" << leaf[0] << "," << leaf[1] << "," << leaf[2] << "] ";
@@ -1958,9 +1978,9 @@ class Polyhedron {
                     }
                 }
             }
-            bool all = true;
+            /*bool all = true;
             for (const std::array<double,3>& vert : poly.verts) {
-                if (!other_poly.is_inface(vert)) {
+                if (!other_poly.is_inside(vert)) {
                     all = false;
                     break;
                 }
@@ -1977,34 +1997,10 @@ class Polyhedron {
                     int p_i2 = *it;
                     output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
                 }
-                //return output;
-            }
+                return output;
+	    }*/
             output[poly_index].push_back(new_edges);
         }
-        /*
-        if (!output[0].size() && !output[1].size()) {
-            for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
-                Polyhedron poly = polys[poly_index];
-                Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
-                bool all = true;
-                for (const std::array<double,3>& point : poly.verts) {
-                    cout << other_poly.is_inface(point) << endl;
-                    if (!other_poly.is_inface(point)) {
-                        all = false;
-                    }
-                }
-                if (all) {
-			        output[poly_index].push_back(set<set<std::array<double,3>>>());
-                    for (const set<int>& edge : poly.edges) {
-                        set<int>::iterator it = edge.begin();
-                        int p_i1 = *it;
-                        it++;
-                        int p_i2 = *it;
-                        output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
-                    }
-                }
-            }
-        }*/
         return output;
     }
 };
