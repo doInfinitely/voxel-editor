@@ -850,6 +850,12 @@ class Polyhedron {
         vector<FaceIntersection> output;
         for (int face_index = 0; face_index < faces.size(); face_index++) {
             vector<std::array<double,3>>* circuit = circuit_cut(this->circuits(face_index)); 
+            vector<std::array<double,3>> temp(circuit->begin(),circuit->end());
+            temp.push_back(segment[0]);
+            temp.push_back(segment[1]);
+            if (Polyhedron::coplanar(temp)) {
+                continue;
+            }
             for (const std::array<std::array<double,3>,3>& triangle : triangulate(*circuit)) {
                 Polyhedron::TriangleIntersection* triangle_intersect = intersect_triangle(segment, triangle);
                 if (triangle_intersect != NULL) {
@@ -1724,7 +1730,7 @@ class Polyhedron {
         std::array<Polyhedron,2> polys;
         polys[0] = *this;
         polys[1] = other;
-        for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
+        /*for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             Polyhedron poly = polys[poly_index];
             Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
             bool all = true;
@@ -1742,9 +1748,9 @@ class Polyhedron {
                     int p_i2 = *it;
                     output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
                 }
-		return output;
+                return output;
             }
-        }
+        }*/
         for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             set<set<std::array<double,3>>> new_edges;
             Polyhedron poly = polys[poly_index];
@@ -1757,8 +1763,10 @@ class Polyhedron {
                 //if (seen_verts.find(vert_index) != seen_verts.end()) {
                 //    continue;
                 //}
+                bool root_in_face = false;
                 if (other_poly.in_faces(vert).size()) {
-                    continue;
+                    //continue;
+                    root_in_face = true;
                 }
                 set<std::array<double,3>> leaves;
                 bool root_in_poly = other_poly.is_inside(vert);
@@ -1785,17 +1793,40 @@ class Polyhedron {
                         int v_i2 = *(difference.begin());
                         vector<FaceIntersection> intersects = other_poly.face_intersect({poly.verts[v_i1], poly.verts[v_i2]});
                         cout << "intersects size " << intersects.size() << endl;
+                        sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
+                        for (const FaceIntersection& intersect : intersects) {
+                            cout << intersect.point[0] << "," << intersect.point[1] << "," << intersect.point[2] << endl;
+                        }
+                        for (int i = 0; i < intersects.size();) {
+                            int j = i+1;
+                            while (j < intersects.size() && round_float(intersects[i].alpha) == round_float(intersects[j].alpha)) {
+                                j++;
+                            }
+                            if (j < intersects.size()) {
+                                new_edges.insert({intersects[i].point, intersects[j].point});
+                                cout << endl;
+                                cout << intersects[i].point[0] << "," << intersects[i].point[1] << "," << intersects[i].point[2] << endl;
+                                cout << intersects[j].point[0] << "," << intersects[j].point[1] << "," << intersects[j].point[2] << endl;
+                            }
+                            i = j+1;
+                            while (i < intersects.size() && round_float(intersects[i-1].alpha) == round_float(intersects[i].alpha)) {
+                                i++;
+                            }
+                        }
                         vector<int> in_faces = other_poly.in_faces(poly.verts[v_i2]);
                         if (in_faces.size()) {
-                            leaves.insert(poly.verts[v_i2]);
+                            if (!root_in_face) {
+                                leaves.insert(poly.verts[v_i2]);
+                            }
                             for (const int& face_index : in_faces){
                                 face_lookup[poly.verts[v_i2]].insert(face_index);
                             }
                             q.push(v_i2);
                         } else if (intersects.size()) {
-                            sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
                             cout << "alpha " << intersects[0].alpha << endl;
-                            leaves.insert(intersects[0].point);
+                            if (!root_in_face) {
+                                leaves.insert(intersects[0].point);
+                            }
                             for (int i = 0; i < intersects.size(); i++) {
                                 if (Polyhedron::round_float(intersects[i].alpha) == Polyhedron::round_float(intersects[0].alpha)) {
                                     face_lookup[intersects[i].point].insert(intersects[i].face_index);
@@ -1805,7 +1836,6 @@ class Polyhedron {
                             }
                             if (root_in_poly) {
                                 new_edges.insert({poly.verts[v_i1], intersects[0].point});
-                                cout << "point 1 " << poly.verts[1][0] << "," << poly.verts[1][1] << "," << poly.verts[1][2] << endl; 
                             } else {
                                 for (int i = 1; i < intersects.size(); i++) {
                                     if (round_float(intersects[i].alpha) > round_float(intersects[0].alpha)) {

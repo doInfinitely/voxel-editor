@@ -2948,6 +2948,7 @@ if __name__ == "__main__":
             if event.type == pygame.MOUSEBUTTONUP:
                 mouse_down = False
         screen.fill("black")
+        '''
         for edge in cube.edges:
             p1, p2 = tuple(cube.verts[index] for index in edge)
             p1, p2 = camera.project(p1), camera.project(p2)
@@ -2956,5 +2957,6 @@ if __name__ == "__main__":
                 p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                 #print(p1,p2)
                 pygame.draw.line(screen, "white", p1, p2)
+        '''
         block.draw(pygame,screen)
         pygame.display.flip()
