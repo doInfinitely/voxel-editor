@@ -22,6 +22,8 @@ class Block:
             print("face",points)
             print('face', face)
             print()
+            if points is None:
+                continue
             self.polygons.add(tuple(points))
     def draw(self, pygame, screen):
         screen_width, screen_height = screen.get_size()
@@ -88,6 +90,8 @@ class Block:
                         points[i][j][d1] = mult*float('inf')
                 for face_index,face in enumerate(self.poly.faces):
                     circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.poly.circuits(face_index)))
+                    if circuit is None:
+                        continue
                     if circuit[0][d1] == circuit[1][d1] and circuit[1][d1] == circuit[2][d1]:
                         for point_row in points:
                             for point in point_row:
@@ -739,16 +743,16 @@ if __name__ == "__main__":
                     if not space_down:
                         if block.select[3] == 0:
                             block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
-                            while not block.select_by_void():
-                                block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            #while not block.select_by_void():
+                            #   block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(1-2*int(z_forward and dir_mult1 != dir_mult2))
                         elif block.select[3] == 1:
                             block.select[1] += direction*block.unit
-                            while not block.select_by_void():
-                                block.select[1] += direction*block.unit
+                            #while not block.select_by_void():
+                            #    block.select[1] += direction*block.unit
                         elif block.select[3] == 2:
                             block.select[1] += direction*block.unit
-                            while not block.select_by_void():
-                                block.select[1] += direction*block.unit
+                            #while not block.select_by_void():
+                            #    block.select[1] += direction*block.unit
                         for i in range(3):
                             if block.select[i] < 0:
                                 block.select[i] = 0
@@ -802,16 +806,16 @@ if __name__ == "__main__":
                     if not space_down:
                         if block.select[3] == 0:
                             block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
-                            while not block.select_by_void():
-                                block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
+                            #while not block.select_by_void():
+                            #    block.select[index] += direction*dir_mult1*dir_mult3*block.unit*(2*int(z_forward)-1)*(1-2*int(z_forward and dir_mult1 != dir_mult2))
                         elif block.select[3] == 1:
                             block.select[0] += direction*dir_mult1*block.unit
-                            while not block.select_by_void():
-                                block.select[0] += direction*dir_mult1*block.unit
+                            #while not block.select_by_void():
+                            #    block.select[0] += direction*dir_mult1*block.unit
                         elif block.select[3] == 2:
                             block.select[2] -= direction*dir_mult2*block.unit
-                            while not block.select_by_void():
-                                block.select[2] -= direction*dir_mult2*block.unit
+                            #while not block.select_by_void():
+                            #    block.select[2] -= direction*dir_mult2*block.unit
                         for i in [0,2]:
                             if block.select[i] > block.size[i]-block.unit:
                                 block.select[i] = block.size[i]-block.unit

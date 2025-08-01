@@ -606,35 +606,19 @@ class Polyhedron {
         return output;
     }
     static vector<std::array<double,3>> make_planar(vector<std::array<double,3>> circuit) {
-        std::array<double,3> p1 = {Polyhedron::distance(circuit[0],circuit[1]),0,0};
-        std::array<double,3> angle = {0,0,asin((circuit[1][1]-circuit[0][1])/p1[0])};
-        p1 = Polyhedron::rotate({p1}, angle)[0];
-        angle[1] = asin(min(max((circuit[1][2]-circuit[0][2])/p1[0],-1.0),1.0));
-        p1 = Polyhedron::rotate({p1}, {0,angle[1],0})[0];
-        angle[1] = -angle[1];
-        angle[2] = -angle[2];
-        p1 = Polyhedron::rotate({{circuit[1][0]-circuit[0][0],circuit[1][1]-circuit[0][1],circuit[1][2]-circuit[0][2]}}, angle)[0];
-        std::array<double,3> p2 = Polyhedron::rotate({{circuit[2][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
-        angle[0] = -atan2(p2[2]-p1[2],p2[1]-p1[1]);
-        std::array<double,3> start = {circuit[0][0],circuit[0][1],circuit[0][2]};
-        for (std::array<double,3>& x : circuit) {
-            for (int i = 0; i < 3; i++) {
-                x[i] -= start[i];
-            }
-            //cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
+        std::array<double,3> vec1 = {circuit[1][0]-circuit[0][0], circuit[1][1]-circuit[0][1], circuit[1][2]-circuit[0][2]};
+        std::array<double,3> vec2 = {circuit[2][0]-circuit[0][0], circuit[2][1]-circuit[0][1], circuit[2][2]-circuit[0][2]};
+        std::array<double,3> vec0 = cross3D(vec1,vec2);
+        vec1 = {0,vec0[1],vec0[2]};
+        vec2 = {vec0[0],0,vec0[2]};
+        std::array<double,3> angles = {0,0,0};
+        if (Polyhedron::distance(vec1) != 0) {
+            angles[0] = -acos(vec1[2]/distance(vec1));
         }
-        //cout << "make_planr" <<endl;
-        vector<std::array<double,3>> output = Polyhedron::rotate(circuit, {0,angle[1],angle[2]});
-        output = Polyhedron::rotate(output, {angle[0],0,0});
-        for (std::array<double,3>& x : output) {
-            x[2] = 0;
+        if (Polyhedron::distance(vec2) != 0) {
+            angles[1] = -acos(vec2[2]/distance(vec2));
         }
-        //cout << "[" << angle[0] << "," << angle[1] << "," << angle[2] << "] " << endl;
-        //for (std::array<double,3>& x : output) {
-        //    cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
-        //}
-        //cout << "make_planar" <<endl;
-        return output;
+        return rotate(circuit, angles);
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
         double summa = 0;
