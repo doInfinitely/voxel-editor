@@ -2179,6 +2179,21 @@ class Polyhedron:
                             new_faces.append(frozenset(face))
                     else:
                         new_faces.append(face)
+        updated = True
+        while updated:
+            updated = False
+            for face_index1, face1 in enumerate(new_faces):
+                for face_index2, face2 in enumerate(new_faces):
+                    if face_index1 < face_index2:
+                        circuits = Polyhedron.circuit_helper(face1|face2)
+                        if Polyhedron.find_exterior_circuit(circuits) is not None:
+                            del new_faces[face_index2]
+                            del new_faces[face_index1]
+                            new_faces.append(face1|face2)
+                            updated = True
+                            break
+                if updated:
+                    break
         poly = Polyhedron()
         poly.verts = list({point for face in new_faces for edge in face for point in edge})
         poly.edges = list({frozenset(poly.verts.index(point) for point in edge) for face in new_faces for edge in face})
