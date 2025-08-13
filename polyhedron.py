@@ -177,7 +177,7 @@ class Polyhedron:
                 beta = None
             try:
                 if alpha is not None and alpha >= 0 and alpha <= 1 and beta is not None and beta >= 0 and beta <= 1:
-                    return tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3))
+                    return tuple(float(alpha*p1[i]+(1-alpha)*p2[i]) for i in range(3))
             except TypeError:
                     pass
                     #alpha = 0
@@ -302,11 +302,11 @@ class Polyhedron:
         vec2 = (vec0[0],0,vec0[2])
         angles = [0,0,0]
         try:
-            angles[0] = -math.acos(vec1[2]/distance(vec1))
+            angles[0] = -math.acos(max(min(1,vec1[2]/distance(vec1)),-1))
         except ZeroDivisionError:
             pass
         try:
-            angles[1] = -math.acos(vec2[2]/distance(vec2))
+            angles[1] = -math.acos(max(min(1,vec2[2]/distance(vec2)),-1))
         except ZeroDivisionError:
             pass
         #print(angles)
@@ -1020,12 +1020,12 @@ class Polyhedron:
                             output.extend([([p1]+x[0],x[1]) for x in path_along_faces(p, p2, face_path+[face_index2])])
                 return output
             return []
-        def path_around(points):
+        def path_around(points, polys=None):
             points = np.array(list(points), dtype=np.float64)
             print(points)
             n = len(points)
-            #if polys is None:
-            #    polys = []
+            if polys is None:
+                polys = []
             # Compute distance matrix
             def create_distance_matrix(points):
                 dist_matrix = {}
@@ -1036,30 +1036,30 @@ class Polyhedron:
                             dist_matrix[i][j] = 0
                         else:
                             dist_matrix[i][j] = int(1000 * np.linalg.norm(points[i] - points[j]))  # scale to int
-                            #p1 = tuple(float(x) for x in points[i])
-                            #p2 = tuple(float(x) for x in points[j])
-                            #for poly in polys:
-                            #    intersects = poly.face_intersect([p1,p2])
-                            #    ps = []
-                            #    #print(p1, p2, intersects, point, "path_around")
-                            #    for intersect in sorted(intersects):
-                            #        if not len(ps) or intersect[1] != ps[-1]:
-                            #            ps.append(intersect[1])
-                            #    ps = [p1] + ps + [p2]
-                            #    for k, p in enumerate(ps[:-1]):
-                            #        midpoint = tuple(0.5*(p[l]+ps[k+1][l]) for l in range(3))        
-                            #        if not poly.is_inside(midpoint):
-                            #            dist_matrix[i][j] = sys.maxsize
-                            #            break
-                            #    if dist_matrix[i][j] == sys.maxsize:
-                            #        break
-                            #ps = [tuple(float(x) for x in k/10*points[i] + (10-k)/10*points[j]) for k in range(1, 10)]
-                            ##print(points[i], points[j])
-                            ##midpoint = tuple(float(x) for x in 0.5*(points[i] + points[j]))
-                            ##if all(poly.is_inside(midpoint) for poly in polys):
-                            #if any(not poly.is_inside(point) for poly in polys for point in ps):
-                            #    #print(points[i], points[j], [x for x in ps if any(not poly.is_inside(x) for poly in polys)], "path_around")
-                            #    dist_matrix[i][j] = sys.maxsize
+                            p1 = tuple(float(x) for x in points[i])
+                            p2 = tuple(float(x) for x in points[j])
+                            for poly in polys:
+                                intersects = poly.face_intersect([p1,p2])
+                                ps = []
+                                #print(p1, p2, intersects, point, "path_around")
+                                for intersect in sorted(intersects):
+                                    if not len(ps) or intersect[1] != ps[-1]:
+                                        ps.append(intersect[1])
+                                ps = [p1] + ps + [p2]
+                                for k, p in enumerate(ps[:-1]):
+                                    midpoint = tuple(0.5*(p[l]+ps[k+1][l]) for l in range(3))        
+                                    if not poly.is_inside(midpoint):
+                                        dist_matrix[i][j] = sys.maxsize
+                                        break
+                                if dist_matrix[i][j] == sys.maxsize:
+                                    break
+                            ps = [tuple(float(x) for x in k/10*points[i] + (10-k)/10*points[j]) for k in range(1, 10)]
+                            #print(points[i], points[j])
+                            #midpoint = tuple(float(x) for x in 0.5*(points[i] + points[j]))
+                            #if all(poly.is_inside(midpoint) for poly in polys):
+                            if any(not poly.is_inside(point) for poly in polys for point in ps):
+                                #print(points[i], points[j], [x for x in ps if any(not poly.is_inside(x) for poly in polys)], "path_around")
+                                dist_matrix[i][j] = sys.maxsize
                 return dist_matrix
 
             distance_matrix = create_distance_matrix(points)
@@ -1096,10 +1096,10 @@ class Polyhedron:
 
             # Solve the problem
             search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-            #search_parameters.first_solution_strategy = (
-            #    routing_enums_pb2.FirstSolutionStrategy.SEQUENTIAL_CHEAPEST_INSERTION)
+            search_parameters.first_solution_strategy = (
+                routing_enums_pb2.FirstSolutionStrategy.SEQUENTIAL_CHEAPEST_INSERTION)
             #search_parameters.solution_limit = 1
-            search_parameters.time_limit.FromMilliseconds(1)
+            #search_parameters.time_limit.FromMilliseconds(1)
             #search_parameters.first_solution_strategy = (
             #    routing_enums_pb2.FirstSolutionStrategy.LOCAL_CHEAPEST_INSERTION)
             #search_parameters = pywrapcp.DefaultRoutingSearchParameters()
@@ -1406,36 +1406,71 @@ class Polyhedron:
         seen_components = set()
         for poly_index in range(2):
             for face_index, face in enumerate(polys[poly_index].faces):
+                #if any(all(any(Polyhedron.inside_triangle(triangle,polys[(poly_index+1)%2].verts[index]) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(polys[poly_index].circuits(face_index)))) for edge_index in polys[(poly_index+1)%2].faces[face_index2] for index in polys[(poly_index+1)%2].edges[edge_index]) for face_index2 in range(len(polys[(poly_index+1)%2].faces))):
+                #    continue
                 cofacial_points = set()
                 for point in points:
                     if any(Polyhedron.inside_triangle(triangle,point) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(polys[poly_index].circuits(face_index)))):
-                    #if Polyhedron.coplanar({polys[poly_index].verts[index] for edge_index in face for index in polys[poly_index].edges[edge_index]}|{point}):
                         cofacial_points.add(point)
-                '''
-                if len(cofacial_points):
-                    update = True
-                    while update:
-                        update = False
-                        for x in cofacial_points:
-                            for y in cofacial_points:
-                                for z in cofacial_points:
-                                    if x != y and y != z and x != z and Polyhedron.colinear([x,y,z]):
-                                        dist, to_delete = max([(distance(x,y),z),(distance(y,z),x),(distance(x,z),y)])
-                                        cofacial_points.remove(to_delete)
-                                        update = True
-                                        break
-                                if update:
-                                    break
-                            if update:
-                                break
-                '''
+                cofacial_points = list(cofacial_points)
                 print("cofacial_points", cofacial_points)
                 if len(cofacial_points) > 2:
+                    edges = set()
                     print(len(cofacial_points))
+                    for index1, point1 in enumerate(cofacial_points):
+                        for index2, point2 in enumerate(cofacial_points[index1+1:]):
+                            for p in polys:
+                                print(point1, p.in_faces(point1), point2, p.in_faces(point2))
+                                if any(not Polyhedron.coplanar(set(cofacial_points)|{p.verts[index] for edge_index in p.faces[i] for index in p.edges[edge_index]}) for i in set(p.in_faces(point1))&set(p.in_faces(point2))):
+                                    edge = frozenset([point1,point2])
+                                    if not any(point != point1 and point != point2 and Polyhedron.point_on_segment(edge, point) for point in cofacial_points):
+                                        edges.add(edge)
+                                    break
+                    edges = list(edges)
+                    '''
+                    updated = True
+                    while updated:
+                        updated = False
+                        for edge_index1, edge1 in enumerate(edges):
+                            for edge_index2, edge2 in enumerate(edges):
+                                if len(edge1&edge2) == 1 and Polyhedron.colinear(edge1|edge2):
+                                    edges.remove(edge1)
+                                    edges.remove(edge2)
+                                    edges.append(edge1^edge2)
+                                    updated = True
+                                    break
+                            if updated:
+                                break
+                    '''
+                    for circuit in Polyhedron.circuit_helper(edges):
+                        new_face = set()
+                        #circuit = tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]]))
+                        if not len(circuit):
+                            continue
+                        for i,p2 in enumerate(circuit):
+                            p1 = circuit[i-1]
+                            print(p1, p2)
+                            p1 = poly.verts.index(p1)
+                            p2 = poly.verts.index(p2)
+                            edge = frozenset([p1,p2])
+                            try:
+                                edge_index = poly.edges.index(edge)
+                                new_face.add(edge_index)
+                            except ValueError:
+                                poly.edges.append(edge)
+                                new_face.add(len(poly.edges)-1)
+                        print(circuit)
+                        for face_index, face in enumerate(poly.faces):
+                            pass
+                            #if Polyhedron.find_exterior_circuit(poly.circuits(face_index)|{circuit}):
+                            #    poly.faces[face_index] |= new_face
+                            #    break
+                        else:
+                            poly.faces.append(frozenset(new_face))
+                    '''
                     total_time1 = 0
                     total_time2 = 0
                     cofacial_points = list(cofacial_points)
-                    edges = set()
                     for i,x in enumerate(cofacial_points):
                         for j,y in enumerate(cofacial_points):
                             if i < j:
@@ -1493,19 +1528,21 @@ class Polyhedron:
                     print("Component time 2:", time.perf_counter()-start_time)
                     for component in list(nx.find_cliques(G)):
                         component = frozenset(cofacial_points[i] for i in component)
+                        print(component, seen_components)
                         if component in seen_components:
                             continue
                         seen_components.add(component)
                         if Polyhedron.colinear(component):
                             continue
-                        path = path_around(component)
+                        path = path_around(component, polys)
                         #path = path_around3(cofacial_points)
                         print('path around', path)
                         if path is None:
                             continue
                         new_face = set()
+                        print('new_face:')
                         for i,x in enumerate(path):
-                            print(poly.verts)
+                            print(path[i-1], x)
                             edge = frozenset([poly.verts.index(path[i-1]),poly.verts.index(x)])
                             if edge in poly.edges:
                                 new_face.add(poly.edges.index(edge))
@@ -1524,16 +1561,17 @@ class Polyhedron:
                         edges.append(edge3)
                         edges.remove(edge1)
                         edge_index1 = poly.edges.index(frozenset(poly.verts.index(point) for point in edge1))
+                        edge_index2 = poly.edges.index(frozenset(poly.verts.index(point) for point in edge2))
+                        edge_index1, edge_index2 = max(edge_index1, edge_index2), min(edge_index1, edge_index2)
                         faces = {face_index for face_index, face in enumerate(poly.faces) if edge_index1 in face}
+                        faces |= {face_index for face_index, face in enumerate(poly.faces) if edge_index2 in face}
                         del poly.edges[edge_index1]
                         for face_index, face in enumerate(poly.faces):
-                            poly.faces[face_index] = frozenset(edge_index - 1 if edge_index > edge_index1 else edge_index for edge_index in face)
+                            poly.faces[face_index] = frozenset(edge_index - 1 if edge_index > edge_index1 else edge_index for edge_index in face if edge_index != edge_index1)
                         edges.remove(edge2)
-                        edge_index2 = poly.edges.index(frozenset(poly.verts.index(point) for point in edge2))
-                        faces |= {face_index for face_index, face in enumerate(poly.faces) if edge_index2 in face}
                         del poly.edges[edge_index2]
                         for face_index, face in enumerate(poly.faces):
-                            poly.faces[face_index] = frozenset(edge_index - 1 if edge_index > edge_index2 else edge_index for edge_index in face)
+                            poly.faces[face_index] = frozenset(edge_index - 1 if edge_index > edge_index2 else edge_index for edge_index in face if edge_index != edge_index2)
                         poly.edges.append(frozenset(poly.verts.index(point) for point in edge3))
                         for face_index in faces:
                             poly.faces[face_index] |= frozenset([len(poly.edges)-1])
@@ -1563,7 +1601,6 @@ class Polyhedron:
                     break
             else:
                 poly.faces.append(frozenset(new_face))
-        '''
         updated = True
         while updated:
             updated = False
@@ -1585,7 +1622,235 @@ class Polyhedron:
                         break
                 if updated:
                     break
-        '''
+                '''
+        edge_index = 0
+        while edge_index < len(poly.edges):
+            if sum(edge_index in face for face in poly.faces) < 2:
+                for face_index, face in enumerate(poly.faces):
+                    poly.faces[face_index] = frozenset(x-1 if x > edge_index else x for x in face if x != edge_index)
+                del poly.edges[edge_index]
+            else:
+                edge_index += 1
+        updated = True
+        while updated:
+            updated = False
+            for face_index1, face1 in enumerate(poly.faces):
+                face1 = frozenset(frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in poly.faces[face_index1])
+                for face_index2, face2 in enumerate(poly.faces):
+                    face2 = frozenset(frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in poly.faces[face_index2])
+                    double_break = False
+                    if face_index1 < face_index2 and Polyhedron.coplanar({point for edge in face1 for point in edge}|{point for edge in face2 for point in edge}):
+                        for edge1 in face1:
+                            for edge2 in face2:
+                                if sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 2:
+                                    poly.faces[face_index1] |= poly.faces[face_index2]
+                                    del poly.faces[face_index2]
+                                    updated = True
+                                    break
+                                elif sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 2:
+                                    poly.faces[face_index1] |= poly.faces[face_index2]
+                                    del poly.faces[face_index2]
+                                    updated = True
+                                    break
+                                elif sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1:
+                                    poly.faces[face_index1] |= poly.faces[face_index2]
+                                    del poly.faces[face_index2]
+                                    updated = True
+                                    break
+                                elif len(edge1&edge2) == 1 and Polyhedron.colinear(edge1|edge2):
+                                    poly.faces[face_index1] |= poly.faces[face_index2]
+                                    del poly.faces[face_index2]
+                                    updated = True
+                                    break
+                            if updated:
+                                break
+                        if updated:
+                            break
+                    if updated:
+                        break
+                if updated:
+                    break
+        edge_index = 0
+        while edge_index < len(poly.edges):
+            if sum(edge_index in face for face in poly.faces) < 2:
+                for face_index, face in enumerate(poly.faces):
+                    poly.faces[face_index] = frozenset(x-1 if x > edge_index else x for x in face if x != edge_index)
+                del poly.edges[edge_index]
+            else:
+                edge_index += 1
+        faces = []
+        for face_index, face in enumerate(poly.faces):
+            circuits = poly.circuits(face_index)
+            circuit_sets = [{circuit} for circuit in circuits]
+            index1 = 0
+            while index1 < len(circuit_sets):
+                index2 = index1 + 1
+                while index2 < len(circuit_sets):
+                    print(circuit_sets[index1])
+                    print(circuit_sets[index2])
+                    if Polyhedron.find_exterior_circuit({tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]])) for circuit in circuit_sets[index1]}|{tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]])) for circuit in circuit_sets[index2]}) is not None:
+                        circuit_sets[index1] |= circuit_sets[index2]
+                        del circuit_sets[index2]
+                    else:
+                        index2 += 1
+                index1 += 1
+            new_faces = []
+            for circuit_set in circuit_sets:
+                face = set()
+                for circuit in circuit_set:
+                    for i, p2 in enumerate(circuit):
+                        p1 = circuit[i-1]
+                        face.add(frozenset([p1,p2]))
+                new_faces.append(list(face))
+            index1 = 0
+            while index1 < len(new_faces):
+                index2 = index1 + 1
+                while index2 < len(new_faces):
+                    combine = False
+                    updated = True
+                    while updated:
+                        updated = False
+                        edge_index1 = 0
+                        while edge_index1 < len(new_faces[index1]):
+                            edge_index2 = 0
+                            while edge_index2 < len(new_faces[index2]):
+                                edge1 = new_faces[index1][edge_index1]
+                                edge2 = new_faces[index2][edge_index2]
+                                if sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 2:
+                                    print(1, edge2, edge1)
+                                    del new_faces[index1][edge_index1]
+                                    del new_faces[index2][edge_index2]
+                                    p1, p2 = edge1
+                                    edge3 = [p1, sorted([(distance(p1,x),x) for x in edge2])[0][1]]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index1].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    edge3 = [p2, sorted([(distance(p2,x),x) for x in edge2])[0][1]]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index1].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    combine = True
+                                    updated = True
+                                    break
+                                elif sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 2:
+                                    print(2, edge2, edge1)
+                                    del new_faces[index1][edge_index1]
+                                    del new_faces[index2][edge_index2]
+                                    p1, p2 = edge2
+                                    edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index2].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    edge3 = [p2, sorted([(distance(p2,x),x) for x in edge1])[0][1]]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index2].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    combine = True
+                                    updated = True
+                                    break
+                                else:
+                                    edge_index2 += 1
+                            if updated:
+                                break
+                            edge_index1 += 1
+                    if combine:
+                        new_faces[index1] += new_faces[index2]
+                        del new_faces[index2]
+                    else:
+                        index2 += 1
+                index1 += 1
+            index1 = 0
+            while index1 < len(new_faces):
+                index2 = index1 + 1
+                while index2 < len(new_faces):
+                    combine = False
+                    updated = True
+                    while updated:
+                        updated = False
+                        edge_index1 = 0
+                        while edge_index1 < len(new_faces[index1]):
+                            edge_index2 = 0
+                            while edge_index2 < len(new_faces[index2]):
+                                edge1 = new_faces[index1][edge_index1]
+                                edge2 = new_faces[index2][edge_index2]
+                                if sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1 and len(edge1&edge2) == 0:
+                                    print(3, edge2, edge1)
+                                    del new_faces[index1][edge_index1]
+                                    del new_faces[index2][edge_index2]
+                                    p1, p2 = edge1
+                                    p3, p4 = edge2
+                                    if Polyhedron.point_on_segment(edge2, p1):
+                                        p1, p2 = p2, p1
+                                    if Polyhedron.point_on_segment(edge1, p4):
+                                        p3, p4 = p4, p3
+                                    edge3 = [p1, p3]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index1].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    edge3 = [p2, p4]
+                                    if round_float(distance(edge3[0],edge3[1])) > 0:
+                                        edge3 = frozenset(edge3)
+                                        new_faces[index2].append(edge3)
+                                        edge3 = frozenset(poly.verts.index(point) for point in edge3)
+                                        if edge3 not in poly.edges:
+                                            poly.edges.append(edge3)
+                                    combine = True
+                                    updated = True
+                                    break
+                                else:
+                                    edge_index2 += 1
+                            if updated:
+                                break
+                            edge_index1 += 1
+                    if combine:
+                        new_faces[index1] += new_faces[index2]
+                        del new_faces[index2]
+                    else:
+                        index2 += 1
+                index1 += 1
+            faces.extend([frozenset(poly.edges.index(frozenset(poly.verts.index(point) for point in edge)) for edge in face) for face in new_faces])
+        poly.faces = faces
+        for face_index, face in enumerate(poly.faces):
+            face = list(face)
+            edge_index1 = 0
+            while edge_index1 < len(face):
+                edge_index2 = edge_index1 + 1
+                while edge_index2 < len(face):
+                    edge1 = frozenset(poly.verts[index] for index in poly.edges[face[edge_index1]])
+                    edge2 = frozenset(poly.verts[index] for index in poly.edges[face[edge_index2]])
+                    if len(edge1&edge2) == 1 and Polyhedron.colinear(edge1|edge2):
+                        edge3 = poly.edges[face[edge_index1]]^poly.edges[face[edge_index2]]
+                        if edge3 not in poly.edges:
+                            poly.edges.append(edge3)
+                        face[edge_index1] = poly.edges.index(edge3)
+                        del face[edge_index2]
+                    else:
+                        edge_index2 += 1
+                edge_index1 += 1
+            poly.faces[face_index] = frozenset(face)
+        edge_index = 0
+        while edge_index < len(poly.edges):
+            if sum(edge_index in face for face in poly.faces) < 2:
+                for face_index, face in enumerate(poly.faces):
+                    poly.faces[face_index] = frozenset(x-1 if x > edge_index else x for x in face if x != edge_index)
+                del poly.edges[edge_index]
+            else:
+                edge_index += 1
         vert_index = 0
         while vert_index < len(poly.verts):
             if all(vert_index not in edge for edge in poly.edges):
@@ -1594,6 +1859,7 @@ class Polyhedron:
                     poly.edges[edge_index] = frozenset(x-1 if x > vert_index else x for x in edge)
             else:
                 vert_index += 1
+        '''
         updated = True
         while updated:
             updated = False
@@ -1613,7 +1879,7 @@ class Polyhedron:
                     updated = True
                 else:
                     edge_index += 1
-        print(poly.faces)
+        poly.faces = [face for face in poly.faces if len(Polyhedron.circuit_helper({frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face}))]
         update = True
         while update:
             update = False
@@ -1621,8 +1887,9 @@ class Polyhedron:
                 for face_index2, face2 in reversed(list(enumerate(poly.faces))):
                     if face_index1 >= face_index2:
                         continue
-                    print(face1, poly.faces[face_index1])
                     if Polyhedron.coplanar({poly.verts[index] for edge_index in poly.faces[face_index1] for index in poly.edges[edge_index]}|{poly.verts[index] for edge_index in poly.faces[face_index2] for index in poly.edges[edge_index]}) and len(face1&face2):
+                        print('face1', [frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face1])
+                        print('face2', [frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face2])
                         edge_indices = poly.faces[face_index1]&poly.faces[face_index2]
                         poly.faces[face_index1] = poly.faces[face_index1]^poly.faces[face_index2]
                         del poly.faces[face_index2]
@@ -1634,6 +1901,8 @@ class Polyhedron:
                         break
                 if update:
                     break
+        for face in poly.faces:
+            print([frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face])
         edge_lookup = dict()
         for index, vert in enumerate(poly.verts):
             edge_lookup[vert] = set()
@@ -1667,6 +1936,8 @@ class Polyhedron:
                         poly.faces[face_index] = frozenset(new_face)
                     else:
                         poly.faces.append(frozenset(new_face))
+        '''
+        poly.faces = [face for face in poly.faces if len(face)]
         '''
         for edge_index1, edge1 in enumerate(poly.edges):
             edge1 = frozenset(poly.verts[index] for index in edge1)
@@ -2059,10 +2330,8 @@ class Polyhedron:
         pairings = []
         faces1 = [frozenset(frozenset(poly1.verts[index] for index in poly1.edges[edge_index]) for edge_index in face) for face in poly1.faces]
         faces2 = [frozenset(frozenset(poly2.verts[index] for index in poly2.edges[edge_index]) for edge_index in face) for face in poly2.faces]
-        face_index1 = 0
         for face_index1, face1 in enumerate(faces1):
             face1 = frozenset(frozenset(poly1.verts[index] for index in poly1.edges[edge_index]) for edge_index in poly1.faces[face_index1])
-            face_index2 = 0
             for face_index2, face2 in enumerate(faces2):
                 face2 = frozenset(frozenset(poly2.verts[index] for index in poly2.edges[edge_index]) for edge_index in poly2.faces[face_index2])
                 double_break = False
@@ -2074,6 +2343,10 @@ class Polyhedron:
                                 double_break = True
                                 break
                             elif sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 2:
+                                pairings.append((face_index1, face_index2))
+                                double_break = True
+                                break
+                            elif sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1 and len(edge1&edge2) == 0:
                                 pairings.append((face_index1, face_index2))
                                 double_break = True
                                 break
@@ -2110,7 +2383,7 @@ class Polyhedron:
                                 while edge_index1 < len(face):
                                     edge1 = face[edge_index1]
                                     if sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 2:
-                                        print(edge2, edge1)
+                                        print(1, edge2, edge1)
                                         del face[edge_index1]
                                         p1, p2 = edge1
                                         edge3 = [p1, sorted([(distance(p1,x),x) for x in edge2])[0][1]]
@@ -2123,7 +2396,7 @@ class Polyhedron:
                                             new_edges.append(edge3)
                                         combine = True
                                     elif sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 2:
-                                        print(edge2, edge1)
+                                        print(2, edge2, edge1)
                                         del face[edge_index1]
                                         p1, p2 = edge2
                                         edge3 = [p1, sorted([(distance(p1,x),x) for x in edge1])[0][1]]
@@ -2137,7 +2410,7 @@ class Polyhedron:
                                         combine = True
                                     elif sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1:
                                         if len(edge1&edge2) == 0:
-                                            print(edge2, edge1)
+                                            print(3, edge2, edge1)
                                             del face[edge_index1]
                                             p1, p2 = edge1
                                             p3, p4 = edge2
@@ -2155,9 +2428,12 @@ class Polyhedron:
                                                 new_edges.append(edge3)
                                             combine = True
                                         elif len(edge1&edge2) == 1 and Polyhedron.colinear(edge1|edge2):
-                                            print(edge2, edge1)
+                                            print(4, edge2, edge1)
                                             del face[edge_index1]
+                                            if edge2 in new_edges:
+                                                new_edges.remove(edge2)
                                             new_edges.append(edge1^edge2)
+                                            edge2 = edge1^edge2
                                             combine = True
                                         else:
                                             edge_index1 += 1
@@ -2171,6 +2447,9 @@ class Polyhedron:
                     print()
                     face = frozenset(face)
                     circuits = Polyhedron.circuit_helper(face)
+                    circuits = {circuit for circuit in circuits if not any(Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]]) and not Polyhedron.point_on_segment([circuit[i-1],circuit[(i+1)%len(circuit)]],x) for i,x in enumerate(circuit))}
+                    circuits = {tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]])) for circuit in circuits}
+                    circuits = {circuit for circuit in circuits if len(circuit)}
                     if Polyhedron.find_exterior_circuit(circuits) is None:
                         for circuit in circuits:
                             face = set()
@@ -2179,13 +2458,34 @@ class Polyhedron:
                             new_faces.append(frozenset(face))
                     else:
                         new_faces.append(face)
+        for face_index, face in enumerate(new_faces):
+            updated = True
+            while updated:
+                updated = False
+                for edge1 in new_faces[face_index]:
+                    for edge2 in new_faces[face_index]:
+                        if edge1 == edge2:
+                            continue
+                        intersect = Polyhedron.intersect_segments(edge1, edge2)
+                        if intersect is not None and not any(distance(intersect,point) < 0.001 for point in edge1|edge2):
+                            print(edge1, edge2, intersect)
+                            new_faces[face_index] -= frozenset([edge1, edge2])
+                            p1, p2 = edge1 
+                            p3, p4 = edge2
+                            new_faces[face_index] |= frozenset([frozenset([p1, intersect]),frozenset([p2,intersect]),frozenset([p3,intersect]),frozenset([p4,intersect])])
+                            updated = True
+                            break
+                    if updated:
+                        break
         updated = True
         while updated:
             updated = False
             for face_index1, face1 in enumerate(new_faces):
                 for face_index2, face2 in enumerate(new_faces):
-                    if face_index1 < face_index2:
+                    if face_index1 < face_index2 and Polyhedron.coplanar({point for edge in new_faces[face_index1] for point in edge}|{point for edge in new_faces[face_index2] for point in edge}):
                         circuits = Polyhedron.circuit_helper(face1|face2)
+                        circuits = {circuit for circuit in circuits if not any(Polyhedron.colinear([circuit[i-1], x, circuit[(i+1)%len(circuit)]]) for i,x in enumerate(circuit))}
+                        print(circuits)
                         if Polyhedron.find_exterior_circuit(circuits) is not None:
                             del new_faces[face_index2]
                             del new_faces[face_index1]
@@ -2194,6 +2494,22 @@ class Polyhedron:
                             break
                 if updated:
                     break
+        face_index = 0
+        while face_index < len(new_faces):
+            circuits = Polyhedron.circuit_helper(new_faces[face_index])
+            circuits = {tuple(x for x in circuit if not any(Polyhedron.colinear([circuit[i-1], x, circuit[(i+1)%len(circuit)]]) for i,x in enumerate(circuit))) for circuit in circuits}
+            circuits = {circuit for circuit in circuits if len(circuit)}
+            print(circuits)
+            if Polyhedron.find_exterior_circuit(circuits) is None:
+                del new_faces[face_index]
+                for circuit in circuits:
+                    face = set()
+                    for i, p2 in enumerate(circuit):
+                        p1 = circuit[i-1]
+                        face.add(frozenset([p1,p2]))
+                    new_faces.append(frozenset(face))
+            else:
+                face_index += 1
         poly = Polyhedron()
         poly.verts = list({point for face in new_faces for edge in face for point in edge})
         poly.edges = list({frozenset(poly.verts.index(point) for point in edge) for face in new_faces for edge in face})
@@ -2204,8 +2520,8 @@ class Polyhedron:
         new_poly.verts = list(self.verts)
         new_poly.edges = list(self.edges)
         new_poly.faces = list(self.faces)
-        #poly = self.intersect(other, use_cpp)
-        return Polyhedron.add_subtract_helper(other,new_poly)
+        poly = self.intersect(other, use_cpp)
+        return Polyhedron.add_subtract_helper(poly,new_poly)
     def add(self, other, use_cpp=True):
         new_poly1 = Polyhedron()
         new_poly1.verts = list(other.verts)
@@ -2216,9 +2532,11 @@ class Polyhedron:
         new_poly2.edges = list(self.edges)
         new_poly2.faces = list(self.faces)
         poly = self.intersect(other, use_cpp)
-        print('enclosed', poly.is_enclosed(), poly.edges)
-        if poly.is_enclosed():
-            new_poly1 = new_poly1.subtract(poly, use_cpp)
+        print('enclosed', poly.is_enclosed())
+        #for face in poly.faces:
+        #    print([frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face])
+        #if poly.is_enclosed():
+        new_poly1 = new_poly1.subtract(poly, use_cpp)
         return Polyhedron.add_subtract_helper(new_poly1, new_poly2)
 
                         
