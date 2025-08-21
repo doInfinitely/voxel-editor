@@ -95,11 +95,16 @@ class Polyhedron:
                             circuits.remove(y)
         return circuits
     def colinear(points, rtol=0.0001):
+        points = list(points)
+        index = 1
+        while index < len(points) and distance(points[0],points[index]) < rtol:
+            index += 1
+        if index > len(points):
+            return True
         if len(points) < 3:
             return True
-        points = list(points)
-        for p in points[2:]:
-            a = np.array([[float(points[1][i]-points[0][i])] for i in range(3)])
+        for p in points[1:index]+points[index+1:]:
+            a = np.array([[float(points[index][i]-points[0][i])] for i in range(3)])
             b = np.array([float(p[i]-points[0][i]) for i in range(3)])
             x, res, rank, s = np.linalg.lstsq(a, b)
             if not distance(np.dot(a, x), b) <= rtol:
@@ -978,6 +983,11 @@ class Polyhedron:
             point = list(current - previous)[0]
             if point in path:
                 return set()
+            if len(path) > 2:
+                for i, p2 in enumerate(path[:-2]):
+                    p1 = path[i-1]
+                    if Polyhedron.point_on_segment([path[-2],path[-1]], p1) or Polyhedron.point_on_segment([path[-2],path[-1]], p2) or Polyhedron.intersect_segments([p1,p2],[path[-2],path[-1]]) is not None:
+                        return set()
             previous = current
             temp = list(edge_lookup[point]-set([previous]))
             for current in temp:
@@ -1442,6 +1452,7 @@ class Polyhedron:
                             if updated:
                                 break
                     '''
+                    print(edges)
                     for circuit in Polyhedron.circuit_helper(edges):
                         new_face = set()
                         #circuit = tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]]))
@@ -2447,9 +2458,10 @@ class Polyhedron:
                     print()
                     face = frozenset(face)
                     circuits = Polyhedron.circuit_helper(face)
-                    circuits = {circuit for circuit in circuits if not any(Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]]) and not Polyhedron.point_on_segment([circuit[i-1],circuit[(i+1)%len(circuit)]],x) for i,x in enumerate(circuit))}
+                    #circuits = {circuit for circuit in circuits if not any(Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]]) and not Polyhedron.point_on_segment([circuit[i-1],circuit[(i+1)%len(circuit)]],x) for i,x in enumerate(circuit))}
                     circuits = {tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]])) for circuit in circuits}
                     circuits = {circuit for circuit in circuits if len(circuit)}
+                    print(circuits)
                     if Polyhedron.find_exterior_circuit(circuits) is None:
                         for circuit in circuits:
                             face = set()
@@ -2484,8 +2496,8 @@ class Polyhedron:
                 for face_index2, face2 in enumerate(new_faces):
                     if face_index1 < face_index2 and Polyhedron.coplanar({point for edge in new_faces[face_index1] for point in edge}|{point for edge in new_faces[face_index2] for point in edge}):
                         circuits = Polyhedron.circuit_helper(face1|face2)
-                        circuits = {circuit for circuit in circuits if not any(Polyhedron.colinear([circuit[i-1], x, circuit[(i+1)%len(circuit)]]) for i,x in enumerate(circuit))}
-                        print(circuits)
+                        circuits = {tuple(x for i,x in enumerate(circuit) if not Polyhedron.colinear([circuit[i-1],x,circuit[(i+1)%len(circuit)]])) for circuit in circuits}
+                        circuits = {circuit for circuit in circuits if len(circuit)}
                         if Polyhedron.find_exterior_circuit(circuits) is not None:
                             del new_faces[face_index2]
                             del new_faces[face_index1]

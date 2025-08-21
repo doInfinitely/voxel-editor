@@ -274,8 +274,8 @@ def test_polyhedron(count1=1000, count2=None, seed=0, shape=(100,100,100)):
     assert_polys_equal(voxel_to_polyhedron(voxel_difference2), poly2.subtract(poly1))
 
 if __name__ == "__main__":
-    test_polyhedron(14,14,0,(3,3,3))
-    for i in range(18, 1000):
+    test_polyhedron(500,500,0,(10,10,10))
+    for i in range(10):
         #test_polyhedron(seed = i)
         test_polyhedron(14,14,i,(3,3,3))
         print(f'test {i} passed')
