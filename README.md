@@ -22,6 +22,11 @@ g++ -std=c++17 -I eigen/  -I /opt/homebrew/include -L/opt/homebrew/lib -lortools
 ```
 
 ```
+g++ -std=c++17 -I eigen/ polyhedron.cpp -o polyhedron `pkg-config --cflags --libs sdl2`
+
+```
+
+```
 g++ -std=c++17 -I /opt/homebrew/include -L/opt/homebrew/lib -lortools test_ortools.cpp -o test_ortools
 ```
 

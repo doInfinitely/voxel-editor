@@ -1,6 +1,7 @@
 from utility import *
 from polyhedron import Polyhedron, get_cube
 from camera import Camera
+import subprocess
 
 class Block:
     def __init__(self, width, height, depth, unit=1):
@@ -719,6 +720,7 @@ if __name__ == "__main__":
                     block = block.reunit(1)
                 if event.key == pygame.K_BACKSPACE:
                     delete = not delete
+                    print(delete)
                     #filename = input("Input filename: ")
                     #pickle.dump(block, open(filename,'wb'))
                 dir_mult1 = 1
@@ -889,11 +891,19 @@ if __name__ == "__main__":
                         k,k_max = k_max,k
                     size = (abs(block.select_size[0]),abs(block.select_size[1]),abs(block.select_size[2]))
                     box = get_cube((i+size[0]/2,j+size[1]/2,k+size[2]/2), size)
-                    #print('box',(i,i+size[0]),(j,j+size[1]),(k,k+size[2])) 
+                    print('box',(i,i+size[0]),(j,j+size[1]),(k,k+size[2])) 
+                    block.poly.dump("poly1.ply")
+                    box.dump("poly2.ply")
                     if delete:
-                        block.poly = block.poly.subtract(box)
+                        #block.poly = block.poly.subtract(box)
+                        subprocess.run(["./polyhedron", '--operation', 'subtract'])
+                        block.poly = Polyhedron.load("out.ply")
+                        print('subtract')
                     else:
-                        block.poly = block.poly.add(box)
+                        #block.poly = block.poly.add(box)
+                        subprocess.run(["./polyhedron", '--operation', 'add'])
+                        block.poly = Polyhedron.load("out.ply")
+                        print('add')
                     block.poly.round_verts(lambda x: round_point_meter(x, meters))
                     block.flip()
                     #print(meters)

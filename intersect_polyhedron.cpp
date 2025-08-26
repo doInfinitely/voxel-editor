@@ -1714,27 +1714,38 @@ class Polyhedron {
         std::array<Polyhedron,2> polys;
         polys[0] = *this;
         polys[1] = other;
-        /*for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
+        for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             Polyhedron poly = polys[poly_index];
             Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
             bool all = true;
-            for (const std::array<double,3>& point : poly.verts) {
-                if (!other_poly.is_inside(point)) {
+	        for (const set<int>& edge1 : poly.edges) {
+                bool any = false;
+	            for (const set<int>& edge2 : other_poly.edges) {
+                    set<std::array<double,3>> edge2_grounded;
+                    for (const int& index : edge2) {
+                        edge2_grounded.insert(other_poly.verts[index]);
+                    }
+                    bool broke = false;
+                    for (const int& index : edge1) {
+                        if (!Polyhedron::point_on_segment(edge2_grounded, poly.verts[index])) {
+                            broke = true;
+                            break;
+                        }
+                    }
+                    if (!broke) {
+                        any = true;
+                        break; 
+                    }
+                }
+                if (!any) {
                     all = false;
+                    break;
                 }
-            }
+	        }
             if (all) {
-                output[poly_index].push_back(set<set<std::array<double,3>>>());
-                for (const set<int>& edge : poly.edges) {
-                    set<int>::iterator it = edge.begin();
-                    int p_i1 = *it;
-                    it++;
-                    int p_i2 = *it;
-                    output[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
-                }
                 return output;
             }
-        }*/
+        }
         for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             set<set<std::array<double,3>>> new_edges;
             Polyhedron poly = polys[poly_index];

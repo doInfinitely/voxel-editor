@@ -13,8 +13,6 @@
 #include <queue>
 #include <fstream>
 #include <queue>
-#include "ortools/constraint_solver/routing.h"
-#include "ortools/constraint_solver/routing_parameters.h"
 #include <vector>
 #include <limits>
 
@@ -39,7 +37,6 @@ inline std::string trim(std::string s) {
 }
 using namespace Eigen;
 using namespace std;
-using namespace operations_research;
 
 constexpr double pi = 3.14159265358979323846;
 
@@ -214,51 +211,6 @@ class Polyhedron {
             }
         }
         return dist_matrix;
-    }
-
-    static vector<std::array<double,3>> solve_tsp(const set<std::array<double, 3>>& point_set, std::array<Polyhedron,2>& polys) {
-        vector<std::array<double,3>> points(point_set.begin(),point_set.end());
-        int n = points.size();
-        vector<vector<int>> dist_matrix = create_distance_matrix(points, polys);
-
-        // Fix: Use NodeIndex type for depot
-        const RoutingIndexManager::NodeIndex depot{0};
-        RoutingIndexManager manager(n, 1, depot);  // 1 vehicle, depot = NodeIndex{0}
-        RoutingModel routing(manager);
-
-        const int transit_callback_index = routing.RegisterTransitCallback(
-            [&dist_matrix, &manager](int64_t from_index, int64_t to_index) -> int64_t {
-                // Fix: IndexToNode returns NodeIndex, need to convert to int
-                RoutingIndexManager::NodeIndex from_node = manager.IndexToNode(from_index);
-                RoutingIndexManager::NodeIndex to_node = manager.IndexToNode(to_index);
-                return dist_matrix[from_node.value()][to_node.value()];
-            });
-
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index);
-
-        routing.AddDimension(transit_callback_index, 0, 1'000'000, true, "Distance");
-
-        RoutingSearchParameters search_params = DefaultRoutingSearchParameters();
-        search_params.set_first_solution_strategy(FirstSolutionStrategy::SEQUENTIAL_CHEAPEST_INSERTION);
-
-        const Assignment* solution = routing.SolveWithParameters(search_params);
-
-        if (!solution) return {};
-
-        std::vector<int> ordered_indices;
-        int64_t index = routing.Start(0);
-        while (!routing.IsEnd(index)) {
-            // Fix: Convert NodeIndex to int using .value()
-            RoutingIndexManager::NodeIndex node = manager.IndexToNode(index);
-            ordered_indices.push_back(node.value());
-            index = solution->Value(routing.NextVar(index));
-        }
-        
-        vector<std::array<double,3>> output;
-        for (const int& index : ordered_indices) {
-            output.push_back(points[index]);
-        }
-        return output;
     }
 
 set<vector<std::array<double,3>>> circuits(int face_index, int start, int previous, int current, vector<std::array<double,3>> path, set<vector<std::array<double,3>>> old_circuits) {
@@ -444,14 +396,23 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         return output;
     }
     static bool colinear(vector<std::array<double,3>> points) {
+        int index = 1;
+        for (; index < points.size() && Polyhedron::distance(points[0], points[index]) < 0.0001; index++) {
+        }
+        if (index >= points.size()) {
+            return true;
+        }
         if (points.size() < 3) {
             return true;
         }
         MatrixXd m(3,1);
         for (int i=0; i < 3; i++) {
-            m(i,0) = points[1][i]-points[0][i];
+            m(i,0) = points[index][i]-points[0][i];
         }
         for (const std::array<double,3>& p : points) {
+            if (p == points[index]) {
+                continue;
+            }
             VectorXd b(3);
             for (int i=0; i < 3; i++) {
                 b(i) = p[i]-points[0][i];
@@ -570,7 +531,7 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         m(3,0) = 1;
         m(3,1) = 1;
         m(4,2) = 1;
-        m(5,3) = 1;
+        m(4,3) = 1;
         VectorXd b(5);
         for (int j = 0; j < 3; j++) {
             b(j) = 0;
@@ -706,35 +667,49 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         return output;
     }
     static vector<std::array<double,3>> make_planar(vector<std::array<double,3>> circuit) {
-        std::array<double,3> p1 = {Polyhedron::distance(circuit[0],circuit[1]),0,0};
-        std::array<double,3> angle = {0,0,asin((circuit[1][1]-circuit[0][1])/p1[0])};
-        p1 = Polyhedron::rotate({p1}, angle)[0];
-        angle[1] = asin(min(max((circuit[1][2]-circuit[0][2])/p1[0],-1.0),1.0));
-        p1 = Polyhedron::rotate({p1}, {0,angle[1],0})[0];
-        angle[1] = -angle[1];
-        angle[2] = -angle[2];
-        p1 = Polyhedron::rotate({{circuit[1][0]-circuit[0][0],circuit[1][1]-circuit[0][1],circuit[1][2]-circuit[0][2]}}, angle)[0];
-        std::array<double,3> p2 = Polyhedron::rotate({{circuit[2][0]-circuit[0][0],circuit[2][1]-circuit[0][1],circuit[2][2]-circuit[0][2]}}, angle)[0];
-        angle[0] = -atan2(p2[2]-p1[2],p2[1]-p1[1]);
-        std::array<double,3> start = {circuit[0][0],circuit[0][1],circuit[0][2]};
-        for (std::array<double,3>& x : circuit) {
-            for (int i = 0; i < 3; i++) {
-                x[i] -= start[i];
-            }
-            //cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
+        // Calculate vec1 and vec2
+        std::array<double,3> vec1;
+        std::array<double,3> vec2;
+        for (int i = 0; i < 3; i++) {
+            vec1[i] = circuit[1][i] - circuit[0][i];
+            vec2[i] = circuit[2][i] - circuit[0][i];
         }
-        //cout << "make_planr" <<endl;
-        vector<std::array<double,3>> output = Polyhedron::rotate(circuit, {0,angle[1],angle[2]});
-        output = Polyhedron::rotate(output, {angle[0],0,0});
-        for (std::array<double,3>& x : output) {
-            x[2] = 0;
+        
+        // Calculate cross product vec0 = cross3D(vec1, vec2)
+        std::array<double,3> vec0 = cross3D(vec1, vec2);
+        
+        // Reassign vec1 and vec2
+        vec1 = {0.0, vec0[1], vec0[2]};
+        vec2 = {vec0[0], 0.0, vec0[2]};
+        
+        // Calculate angles
+        std::array<double,3> angles = {0.0, 0.0, 0.0};
+        
+        // Calculate angles[0] with zero division protection
+        double vec1_distance = distance(vec1);
+        if (vec1_distance != 0.0) {
+            double cos_val = vec1[2] / vec1_distance;
+            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
+            angles[0] = -acos(cos_val);
         }
-        //cout << "[" << angle[0] << "," << angle[1] << "," << angle[2] << "] " << endl;
-        //for (std::array<double,3>& x : output) {
-        //    cout << "[" << x[0] << "," << x[1] << "," << x[2] << "] ";
-        //}
-        //cout << "make_planar" <<endl;
-        return output;
+        
+        // Calculate angles[1] with zero division protection  
+        double vec2_distance = distance(vec2);
+        if (vec2_distance != 0.0) {
+            double cos_val = vec2[2] / vec2_distance;
+            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
+            angles[1] = -acos(cos_val);
+        }
+        
+        // Rotate the circuit and project to 2D (set z=0)
+        vector<std::array<double,3>> rotated_circuit = rotate(circuit, angles);
+        vector<std::array<double,3>> result;
+        
+        for (const std::array<double,3>& point : rotated_circuit) {
+            result.push_back({point[0], point[1], 0.0});
+        }
+        
+        return result;
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
         double summa = 0;
@@ -950,6 +925,12 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         vector<FaceIntersection> output;
         for (int face_index = 0; face_index < faces.size(); face_index++) {
             vector<std::array<double,3>>* circuit = circuit_cut(this->circuits(face_index)); 
+            vector<std::array<double,3>> temp(circuit->begin(),circuit->end());
+            temp.push_back(segment[0]);
+            temp.push_back(segment[1]);
+            if (Polyhedron::coplanar(temp)) {
+                continue;
+            }
             for (const std::array<std::array<double,3>,3>& triangle : triangulate(*circuit)) {
                 Polyhedron::TriangleIntersection* triangle_intersect = intersect_triangle(segment, triangle);
                 if (triangle_intersect != NULL) {
@@ -966,6 +947,7 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         }
         return output;
     }
+
     static bool compare_circuit_intersections(Polyhedron::CircuitIntersection a, Polyhedron::CircuitIntersection b) {
         return a.alpha < b.alpha;
     }
@@ -1153,7 +1135,7 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
             for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
                 if (Polyhedron::inside_triangle(triangle, point)) {
                     output.push_back(face_index);
-		    break;
+                    break;
                 }
             }
             delete circuit;
@@ -1819,96 +1801,890 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         }
         return output;
     }
-    Polyhedron edge_sets_to_poly(std::array<vector<set<set<std::array<double,3>>>>,2> edge_sets_per_poly, std::array<Polyhedron,2> polys) {
-        Polyhedron poly;
-        set<std::array<double,3>> points;
-        for (const vector<set<set<std::array<double,3>>>>& edge_sets : edge_sets_per_poly) {
-            for (const set<set<std::array<double,3>>>& edges : edge_sets) {
-                for (const set<std::array<double,3>>& edge : edges) {
-                    for (const std::array<double,3>& point : edge) {
-                        points.insert(point);
+    static set<vector<std::array<double,3>>> circuit_helper(
+            set<set<std::array<double,3>>> edges, 
+            set<std::array<double,3>> start,
+            set<std::array<double,3>> previous,
+            set<std::array<double,3>> current,
+            vector<std::array<double,3>> path) {
+         
+        // Build edge_lookup exactly like Python
+        map<std::array<double,3>, set<set<std::array<double,3>>>> edge_lookup;
+        for (const auto& edge : edges) {
+            for (const auto& point : edge) {
+                edge_lookup[point].insert(edge);
+            }
+        }
+        
+        set<vector<std::array<double,3>>> circuits;
+        
+        if (start.empty()) {
+            // Mirror Python's initial loop structure
+            set<set<std::array<double,3>>> seen;
+            for (const set<std::array<double,3>>& start_edge : edges) {
+                vector<std::array<double,3>> empty_path;
+                std::array<double,3> point = *start_edge.begin();
+                
+                set<set<std::array<double,3>>> temp = edge_lookup[point];
+                temp.erase(start_edge);
+                
+                for (const set<std::array<double,3>>& current_edge : temp) {
+                    vector<std::array<double,3>> new_path = {point};
+                    set<std::array<double,3>> path_set(new_path.begin(), new_path.end());
+                    if (coplanar(path_set)) {
+                        set<vector<std::array<double,3>>> result = circuit_helper(edges, start_edge, start_edge, current_edge, new_path);
+                        circuits.insert(result.begin(), result.end());
+                    }
+                }
+            }
+        } else {
+            // Mirror Python's recursive logic
+            if (current == start) {
+                return {path};
+            }
+            
+            // Find the point: list(current - previous)[0]
+            set<std::array<double,3>> difference;
+            set_difference(current.begin(), current.end(),
+                          previous.begin(), previous.end(),
+                          inserter(difference, difference.begin()));
+            
+            if (difference.empty()) return circuits;
+            std::array<double,3> point = *difference.begin();
+            
+            // Check if point already in path
+            if (find(path.begin(), path.end(), point) != path.end()) {
+                return circuits;
+            }
+            
+            // Self-intersection check (match Python's logic exactly)
+            if (path.size() > 2) {
+                std::array<double,3> path_prev = path[path.size() - 2];
+                std::array<double,3> path_last = path[path.size() - 1];
+                for (int i = 1; i < path.size() - 2; i++) {
+                    std::array<double,3> p1 = path[i - 1];
+                    std::array<double,3> p2 = path[i];
+                    
+                    std::array<double,3>* intersect = intersect_segments({p1, p2}, {path_prev, path_last});
+                    
+                    if (intersect != NULL) {
+                        if (distance(*intersect, path_prev) > 0.001 && distance(*intersect, path_last) > 0.001) {
+                            delete intersect;
+                            return circuits;
+                        }
+                        delete intersect;
+                    }
+                }
+            }
+            
+            // Update previous to current (like Python)
+            set<std::array<double,3>> new_previous = current;
+            
+            // Get next edges
+            set<set<std::array<double,3>>> temp = edge_lookup[point];
+            temp.erase(new_previous);
+            
+            vector<std::array<double,3>> new_path = path;
+            new_path.push_back(point);
+            
+            for (const set<std::array<double,3>>& next_edge : temp) {
+                set<std::array<double,3>> path_set(new_path.begin(), new_path.end());
+                if (coplanar(path_set)) {
+                    set<vector<std::array<double,3>>> result = circuit_helper(edges, start, new_previous, next_edge, new_path);
+                    circuits.insert(result.begin(), result.end());
+                }
+            }
+        }
+        
+        // Mirror Python's duplicate removal logic
+        vector<vector<std::array<double,3>>> circuits_list(circuits.begin(), circuits.end());
+        
+        for (int i = 0; i < circuits_list.size(); i++) {
+            for (int j = i + 1; j < circuits_list.size(); j++) {
+                const auto& x = circuits_list[i];
+                const auto& y = circuits_list[j];
+                
+                // Check if not len(set(x)-set(y)) (i.e., x is subset of y)
+                set<std::array<double,3>> x_set(x.begin(), x.end());
+                set<std::array<double,3>> y_set(y.begin(), y.end());
+                set<std::array<double,3>> difference;
+                set_difference(x_set.begin(), x_set.end(),
+                              y_set.begin(), y_set.end(),
+                              inserter(difference, difference.begin()));
+                
+                if (difference.empty()) {
+                    // Create reversed y
+                    vector<std::array<double,3>> y_r(y.rbegin(), y.rend());
+                    
+                    // Find x[0] in y and y_r  
+                    vector<std::array<double,3>>::const_iterator y_it = find(y.begin(), y.end(), x[0]);
+                    vector<std::array<double,3>>::const_iterator yr_it = find(y_r.begin(), y_r.end(), x[0]);
+                    
+                    bool should_remove = false;
+                    
+                    if (y_it != y.end()) {
+                        // Check (y[y.index(x[0]):]+y[:y.index(x[0])])[:len(x)] == x
+                        vector<std::array<double,3>> rotated_y;
+                        rotated_y.reserve(y.size());
+                        for (vector<std::array<double,3>>::const_iterator it = y_it; it != y.end(); ++it) {
+                            rotated_y.push_back(*it);
+                        }
+                        for (vector<std::array<double,3>>::const_iterator it = y.begin(); it != y_it; ++it) {
+                            rotated_y.push_back(*it);
+                        }
+                        
+                        if (rotated_y.size() >= x.size()) {
+                            vector<std::array<double,3>> prefix(rotated_y.begin(), rotated_y.begin() + x.size());
+                            if (prefix == x) should_remove = true;
+                        }
+                    }
+                    
+                    if (!should_remove && yr_it != y_r.end()) {
+                        // Check same for y_r
+                        vector<std::array<double,3>> rotated_yr;
+                        rotated_yr.reserve(y_r.size());
+                        for (vector<std::array<double,3>>::const_iterator it = yr_it; it != y_r.end(); ++it) {
+                            rotated_yr.push_back(*it);
+                        }
+                        for (vector<std::array<double,3>>::const_iterator it = y_r.begin(); it != yr_it; ++it) {
+                            rotated_yr.push_back(*it);
+                        }
+                        
+                        if (rotated_yr.size() >= x.size()) {
+                            vector<std::array<double,3>> prefix(rotated_yr.begin(), rotated_yr.begin() + x.size());
+                            if (prefix == x) should_remove = true;
+                        }
+                    }
+                    
+                    if (should_remove && circuits.count(y)) {
+                        circuits.erase(y);
                     }
                 }
             }
         }
-        map<std::array<double,3>,std::array<double,3>> point_map;
-        for (const std::array<double,3> point : points) {
-            if (point_map.find(Polyhedron::round_point(point)) != point_map.end()) {
-                if (Polyhedron::distance(point, Polyhedron::round_point(point)) < distance(point_map[round_point(point)], Polyhedron::round_point(point))) {
-                    point_map[Polyhedron::round_point(point)] = point;
+        
+        return circuits;
+    }
+    // Static wrapper that can be called without object instance
+    static set<vector<std::array<double,3>>> circuit_helper(set<set<std::array<double,3>>> edges) {
+        return circuit_helper(edges, {}, {}, {}, {});
+    }
+    Polyhedron edge_sets_to_poly(std::array<vector<set<set<std::array<double,3>>>>,2> edge_sets_per_poly, std::array<Polyhedron,2> polys) {
+        // Print edge sets per poly (equivalent to Python print statement)
+        // print('edge sets per poly:', edge_sets_per_poly)
+        std::cout << "edge sets per poly: [";
+        for (int i = 0; i < 2; i++) {
+            std::cout << "[";
+            bool first_set = true;
+            for (const auto& edge_set : edge_sets_per_poly[i]) {
+                if (!first_set) std::cout << ", ";
+                std::cout << "{";
+                bool first_edge = true;
+                for (const auto& edge : edge_set) {
+                    if (!first_edge) std::cout << ", ";
+                    std::cout << "{";
+                    bool first_point = true;
+                    for (const auto& point : edge) {
+                        if (!first_point) std::cout << ", ";
+                        std::cout << "(" << point[0] << ", " << point[1] << ", " << point[2] << ")";
+                        first_point = false;
+                    }
+                    std::cout << "}";
+                    first_edge = false;
                 }
-            } else {
-                point_map[Polyhedron::round_point(point)] = point;
+                std::cout << "}";
+                first_set = false;
+            }
+            std::cout << "]";
+            if (i < 1) std::cout << ", ";
+        }
+        std::cout << "]" << std::endl;
+        
+        // Collect edges per poly
+        std::array<set<set<std::array<double,3>>>,2> edges_per_poly;
+        for (int poly_index = 0; poly_index < 2; poly_index++) {
+            for (const auto& edge_set : edge_sets_per_poly[poly_index]) {
+                edges_per_poly[poly_index].insert(edge_set.begin(), edge_set.end());
             }
         }
-        points.clear();
-        for (const pair<std::array<double,3>,std::array<double,3>>& p : point_map) {
-            points.insert(p.second);
-            poly.verts.push_back(p.second);
+        
+        // Collect points per poly
+        std::array<set<std::array<double,3>>,2> points_per_poly;
+        for (int poly_index = 0; poly_index < 2; poly_index++) {
+            for (const auto& edge : edges_per_poly[poly_index]) {
+                points_per_poly[poly_index].insert(edge.begin(), edge.end());
+            }
         }
+        
+        // Union all points
+        set<std::array<double,3>> points = points_per_poly[0];
+        points.insert(points_per_poly[1].begin(), points_per_poly[1].end());
+        
+        // Create point mapping for rounding
+        map<std::array<double,3>, std::array<double,3>> point_map;
+        for (const std::array<double,3>& point : points) {
+            std::array<double,3> rounded = round_point(point);
+            if (point_map.find(rounded) != point_map.end()) {
+                if (distance(point, rounded) < distance(point_map[rounded], rounded)) {
+                    point_map[rounded] = point;
+                }
+            } else {
+                point_map[rounded] = point;
+            }
+        }
+        
+        points.clear();
+        for (const auto& p : point_map) {
+            points.insert(p.second);
+        }
+        
+        Polyhedron poly;
+        poly.verts = vector<std::array<double,3>>(points.begin(), points.end());
+        
+        set<vector<std::array<double,3>>> seen_components;
+        
+        // Process faces from both polyhedra
         for (int poly_index = 0; poly_index < 2; poly_index++) {
             for (int face_index = 0; face_index < polys[poly_index].faces.size(); face_index++) {
-                set<std::array<double,3>> cofacial_points;
+                // Find cofacial points
+                set<std::array<double,3>> cofacial_points_set;
+                vector<std::array<double,3>>* circuit = circuit_cut(polys[poly_index].circuits(face_index));
+                if (!circuit) continue;
+                
+                vector<std::array<std::array<double, 3>, 3>> triangles = triangulate(*circuit);
                 for (const std::array<double,3>& point : points) {
-                    bool any = false;
-                    for (const std::array<std::array<double,3>,3>& triangle: Polyhedron::triangulate(*Polyhedron::circuit_cut(polys[poly_index].circuits(face_index)))) {
-                        if (Polyhedron::inside_triangle(triangle, point)) {
-                            any = true;
+                    bool is_cofacial = false;
+                    for (const std::array<std::array<double, 3>, 3>& triangle : triangles) {
+                        if (inside_triangle(triangle, point)) {
+                            is_cofacial = true;
                             break;
                         }
                     }
-                    if (any) {
-                        cofacial_points.insert(point);
+                    if (is_cofacial) {
+                        cofacial_points_set.insert(point);
                     }
                 }
+                
+                delete circuit;
+                
+                vector<std::array<double,3>> cofacial_points(cofacial_points_set.begin(), cofacial_points_set.end());
+                cout << "cofacial_points size: " << cofacial_points.size() << endl;
+                
                 if (cofacial_points.size() > 2) {
-                    vector<std::array<double,3>> path = solve_tsp(cofacial_points, polys);
-                    if (!path.size()) {
-                        continue;
-                    }
-                    set<int> new_face;
-                    for (int i = 0; i < path.size(); i++) {
-                        set<int> edge = {(int)std::distance(poly.verts.begin(),find(poly.verts.begin(),poly.verts.end(),path[(i-1+path.size())%path.size()])), (int)std::distance(poly.verts.begin(), find(poly.verts.begin(),poly.verts.end(),path[i]))};
-                        vector<set<int>>::iterator it = find(poly.edges.begin(),poly.edges.end(),edge);
-                        if (it != poly.edges.end()) {
-                            new_face.insert(std::distance(poly.edges.begin(),it));
-                        } else {
-                            poly.edges.push_back(edge);
-                            new_face.insert(poly.edges.size()-1);
+                    set<set<std::array<double,3>>> edges;
+                    cout << cofacial_points.size() << endl;
+                    
+                    for (int index1 = 0; index1 < cofacial_points.size(); index1++) {
+                        for (int index2 = index1 + 1; index2 < cofacial_points.size(); index2++) {
+                            std::array<double,3> point1 = cofacial_points[index1];
+                            std::array<double,3> point2 = cofacial_points[index2];
+                            
+                            bool double_break = false;
+                            
+                            // Check both polyhedra for midpoint validity
+                            for (int poly_idx = 0; poly_idx < 2; poly_idx++) {
+                                Polyhedron p = polys[poly_idx];
+                                vector<FaceIntersection> intersects = p.face_intersect({point1, point2});
+                                
+                                // Sort intersects and build ps array
+                                sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
+                                vector<std::array<double,3>> ps;
+                                for (const FaceIntersection& intersect : intersects) {
+                                    if (ps.empty() || intersect.point != ps.back()) {
+                                        ps.push_back(intersect.point);
+                                    }
+                                }
+                                
+                                // Build complete point sequence: [point1] + ps + [point2]
+                                vector<std::array<double,3>> complete_ps;
+                                complete_ps.push_back(point1);
+                                complete_ps.insert(complete_ps.end(), ps.begin(), ps.end());
+                                complete_ps.push_back(point2);
+                                
+                                // Check midpoints of each segment
+                                for (int k = 0; k < complete_ps.size() - 1; k++) {
+                                    std::array<double,3> midpoint;
+                                    for (int l = 0; l < 3; l++) {
+                                        midpoint[l] = 0.5 * (complete_ps[k][l] + complete_ps[k+1][l]);
+                                    }
+                                    if (!p.is_inside(midpoint)) {
+                                        double_break = true;
+                                        break;
+                                    }
+                                }
+                                if (double_break) break;
+                            }
+                            
+                            if (double_break) continue;
+                            
+                            // Check coplanarity condition for both polyhedra
+                            for (int poly_idx = 0; poly_idx < 2; poly_idx++) {
+                                Polyhedron p = polys[poly_idx];
+                                vector<int> faces1 = p.in_faces(point1);
+                                vector<int> faces2 = p.in_faces(point2);
+                                cout << "point1 faces: " << faces1.size() << " point2 faces: " << faces2.size() << endl;
+                                
+                                // Find intersection of face sets
+                                set<int> face_intersection;
+                                for (int f1 : faces1) {
+                                    for (int f2 : faces2) {
+                                        if (f1 == f2) {
+                                            face_intersection.insert(f1);
+                                        }
+                                    }
+                                }
+                                
+                                bool should_create_edge = false;
+                                for (int common_face : face_intersection) {
+                                    // Collect cofacial points + vertices from common face
+                                    set<std::array<double,3>> face_points(cofacial_points.begin(), cofacial_points.end());
+                                    for (int edge_idx : p.faces[common_face]) {
+                                        for (int vert_idx : p.edges[edge_idx]) {
+                                            face_points.insert(p.verts[vert_idx]);
+                                        }
+                                    }
+                                    
+                                    if (!coplanar(face_points)) {
+                                        // Check if no other point lies on this edge segment
+                                        set<std::array<double,3>> edge = {point1, point2};
+                                        bool point_on_segment_found = false;
+                                        for (const std::array<double,3>& other_point : cofacial_points) {
+                                            if (other_point != point1 && other_point != point2) {
+                                                if (Polyhedron::point_on_segment(edge, other_point)) {
+                                                    point_on_segment_found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!point_on_segment_found) {
+                                            should_create_edge = true;
+                                        }
+                                        break;
+                                    }
+                                }
+                                
+                                if (should_create_edge) {
+                                    edges.insert({point1, point2});
+                                    break;
+                                }
+                            }
                         }
-                        poly.faces.push_back(new_face);
+                    }                    
+                    vector<set<std::array<double,3>>> edges_list(edges.begin(), edges.end());
+                    
+                    // Create circuits from edges
+                    set<vector<std::array<double,3>>> circuits = circuit_helper(edges);
+                    
+                    for (const vector<std::array<double,3>>& circuit : circuits) {
+                        set<int> new_face;
+                        
+                        if (circuit.empty()) continue;
+                        
+                        for (int i = 0; i < circuit.size(); i++) {
+                            std::array<double,3> p1 = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                            std::array<double,3> p2 = circuit[i];
+                            
+                            int idx1 = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), p1));
+                            int idx2 = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), p2));
+                            
+                            set<int> edge = {idx1, idx2};
+                            auto edge_it = find(poly.edges.begin(), poly.edges.end(), edge);
+                            
+                            if (edge_it != poly.edges.end()) {
+                                new_face.insert(std::distance(poly.edges.begin(), edge_it));
+                            } else {
+                                poly.edges.push_back(edge);
+                                new_face.insert(poly.edges.size() - 1);
+                            }
+                        }
+                        
+                        // Check for merging with existing faces (simplified version of Python's complex logic)
+                        bool merged = false;
+                        for (int existing_face_idx = 0; existing_face_idx < poly.faces.size(); existing_face_idx++) {
+                            // This is a simplified version - full Python logic would require find_exterior_circuit
+                            // For exact matching, would need to implement the full circuit merging logic
+                        }
+                        
+                        if (!merged && !new_face.empty()) {
+                            poly.faces.push_back(new_face);
+                        }
                     }
                 }
             }
         }
+        
+        // Remove unused edges (first pass)
+        for (int edge_index = 0; edge_index < poly.edges.size();) {
+            int usage_count = 0;
+            for (const auto& face : poly.faces) {
+                if (face.find(edge_index) != face.end()) {
+                    usage_count++;
+                }
+            }
+            
+            if (usage_count < 2) {
+                // Remove this edge and update face indices
+                for (auto& face : poly.faces) {
+                    set<int> new_face;
+                    for (int idx : face) {
+                        if (idx == edge_index) {
+                            continue; // Remove this edge index
+                        } else if (idx > edge_index) {
+                            new_face.insert(idx - 1); // Shift down
+                        } else {
+                            new_face.insert(idx);
+                        }
+                    }
+                    face = new_face;
+                }
+                poly.edges.erase(poly.edges.begin() + edge_index);
+            } else {
+                edge_index++;
+            }
+        }
+        
+        // Merge coplanar faces (first merging pass)
+        bool updated = true;
+        while (updated) {
+            updated = false;
+            for (int face_index1 = 0; face_index1 < poly.faces.size() && !updated; face_index1++) {
+                for (int face_index2 = face_index1 + 1; face_index2 < poly.faces.size() && !updated; face_index2++) {
+                    // Convert face indices to edge point sets
+                    set<set<std::array<double,3>>> face1_edges, face2_edges;
+                    
+                    for (int edge_idx : poly.faces[face_index1]) {
+                        set<std::array<double,3>> edge_points;
+                        for (int vert_idx : poly.edges[edge_idx]) {
+                            edge_points.insert(poly.verts[vert_idx]);
+                        }
+                        face1_edges.insert(edge_points);
+                    }
+                    
+                    for (int edge_idx : poly.faces[face_index2]) {
+                        set<std::array<double,3>> edge_points;
+                        for (int vert_idx : poly.edges[edge_idx]) {
+                            edge_points.insert(poly.verts[vert_idx]);
+                        }
+                        face2_edges.insert(edge_points);
+                    }
+                    
+                    // Check coplanarity of all points
+                    set<std::array<double,3>> all_face_points;
+                    for (const auto& edge : face1_edges) {
+                        all_face_points.insert(edge.begin(), edge.end());
+                    }
+                    for (const auto& edge : face2_edges) {
+                        all_face_points.insert(edge.begin(), edge.end());
+                    }
+                    
+                    if (coplanar(all_face_points)) {
+                        bool should_merge = false;
+                        
+                        // Check merging conditions
+                        for (const auto& edge1 : face1_edges) {
+                            for (const auto& edge2 : face2_edges) {
+                                // Check if one edge contains the other
+                                int points_on_edge1 = 0, points_on_edge2 = 0;
+                                for (const auto& point : edge2) {
+                                    if (point_on_segment(edge1, point)) points_on_edge1++;
+                                }
+                                for (const auto& point : edge1) {
+                                    if (point_on_segment(edge2, point)) points_on_edge2++;
+                                }
+                                
+                                if (points_on_edge1 == 2) {
+                                    should_merge = true;
+                                    break;
+                                } else if (points_on_edge2 == 2) {
+                                    should_merge = true;
+                                    break;
+                                } else if (points_on_edge1 == 1 && points_on_edge2 == 1) {
+                                    should_merge = true;
+                                    break;
+                                }
+                                
+                                // Check collinear overlap
+                                set<std::array<double,3>> combined_edge = edge1;
+                                combined_edge.insert(edge2.begin(), edge2.end());
+                                if (combined_edge.size() == 3 && colinear(combined_edge)) {
+                                    should_merge = true;
+                                    break;
+                                }
+                            }
+                            if (should_merge) break;
+                        }
+                        
+                        if (should_merge) {
+                            // Merge faces
+                            set<int> merged_face = poly.faces[face_index1];
+                            merged_face.insert(poly.faces[face_index2].begin(), poly.faces[face_index2].end());
+                            
+                            poly.faces[face_index1] = merged_face;
+                            poly.faces.erase(poly.faces.begin() + face_index2);
+                            updated = true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Remove unused edges (second pass)
+        for (int edge_index = 0; edge_index < poly.edges.size();) {
+            int usage_count = 0;
+            for (const auto& face : poly.faces) {
+                if (face.find(edge_index) != face.end()) {
+                    usage_count++;
+                }
+            }
+            
+            if (usage_count < 2) {
+                for (auto& face : poly.faces) {
+                    set<int> new_face;
+                    for (int idx : face) {
+                        if (idx == edge_index) {
+                            continue;
+                        } else if (idx > edge_index) {
+                            new_face.insert(idx - 1);
+                        } else {
+                            new_face.insert(idx);
+                        }
+                    }
+                    face = new_face;
+                }
+                poly.edges.erase(poly.edges.begin() + edge_index);
+            } else {
+                edge_index++;
+            }
+        }
+        
+        // Complex face processing (Python's most complex section)
+        vector<set<int>> faces;
+        for (int face_index = 0; face_index < poly.faces.size(); face_index++) {
+            set<vector<std::array<double,3>>> circuits_result = poly.circuits(face_index);
+            vector<vector<std::array<double,3>>> circuits(circuits_result.begin(), circuits_result.end());
+            vector<set<vector<std::array<double,3>>>> circuit_sets;
+            
+            for (const auto& circuit : circuits) {
+                circuit_sets.push_back({circuit});
+            }
+            
+            // Merge circuit sets using find_exterior_circuit logic
+            int index1 = 0;
+            while (index1 < circuit_sets.size()) {
+                int index2 = index1 + 1;
+                while (index2 < circuit_sets.size()) {
+                    // Create combined set for exterior circuit check
+                    set<vector<std::array<double,3>>> combined_set = circuit_sets[index1];
+                    combined_set.insert(circuit_sets[index2].begin(), circuit_sets[index2].end());
+                    
+                    // Remove collinear points from circuits
+                    set<vector<std::array<double,3>>> filtered_set;
+                    for (const auto& circuit : combined_set) {
+                        vector<std::array<double,3>> filtered_circuit;
+                        for (int i = 0; i < circuit.size(); i++) {
+                            std::array<double,3> prev = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                            std::array<double,3> curr = circuit[i];
+                            std::array<double,3> next = circuit[(i + 1) % circuit.size()];
+                            
+                            if (!colinear(vector<std::array<double,3>>{prev, curr, next})) {
+                                filtered_circuit.push_back(curr);
+                            }
+                        }
+                        if (!filtered_circuit.empty()) {
+                            filtered_set.insert(filtered_circuit);
+                        }
+                    }
+                    
+                    if (find_exterior_circuit(filtered_set) != NULL) {
+                        circuit_sets[index1].insert(circuit_sets[index2].begin(), circuit_sets[index2].end());
+                        circuit_sets.erase(circuit_sets.begin() + index2);
+                    } else {
+                        index2++;
+                    }
+                }
+                index1++;
+            }
+            
+            // Create new faces from circuit sets
+            vector<vector<set<std::array<double,3>>>> new_faces;
+            for (const auto& circuit_set : circuit_sets) {
+                set<set<std::array<double,3>>> face_edges;
+                for (const auto& circuit : circuit_set) {
+                    for (int i = 0; i < circuit.size(); i++) {
+                        std::array<double,3> p1 = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                        std::array<double,3> p2 = circuit[i];
+                        face_edges.insert({p1, p2});
+                    }
+                }
+                new_faces.push_back(vector<set<std::array<double,3>>>(face_edges.begin(), face_edges.end()));
+            }
+            
+            // Complex edge merging logic (first type)
+            index1 = 0;
+            while (index1 < new_faces.size()) {
+                int index2 = index1 + 1;
+                while (index2 < new_faces.size()) {
+                    bool combine = false;
+                    bool local_updated = true;
+                    
+                    while (local_updated) {
+                        local_updated = false;
+                        int edge_index1 = 0;
+                        while (edge_index1 < new_faces[index1].size()) {
+                            int edge_index2 = 0;
+                            while (edge_index2 < new_faces[index2].size()) {
+                                set<std::array<double,3>> edge1 = new_faces[index1][edge_index1];
+                                set<std::array<double,3>> edge2 = new_faces[index2][edge_index2];
+                                
+                                // Check if edge2 is completely contained in edge1
+                                int points_on_edge1 = 0;
+                                for (const auto& point : edge2) {
+                                    if (point_on_segment(edge1, point)) points_on_edge1++;
+                                }
+                                
+                                if (points_on_edge1 == 2) {
+                                    // Remove both edges and create new ones
+                                    new_faces[index1].erase(new_faces[index1].begin() + edge_index1);
+                                    new_faces[index2].erase(new_faces[index2].begin() + edge_index2);
+                                    
+                                    auto edge1_it = edge1.begin();
+                                    std::array<double,3> p1 = *edge1_it++;
+                                    std::array<double,3> p2 = *edge1_it;
+                                    
+                                    // Find closest points
+                                    std::array<double,3> closest_to_p1 = *min_element(edge2.begin(), edge2.end(),
+                                        [&p1](const std::array<double,3>& a, const std::array<double,3>& b) {
+                                            return distance(p1, a) < distance(p1, b);
+                                        });
+                                    std::array<double,3> closest_to_p2 = *min_element(edge2.begin(), edge2.end(),
+                                        [&p2](const std::array<double,3>& a, const std::array<double,3>& b) {
+                                            return distance(p2, a) < distance(p2, b);
+                                        });
+                                    
+                                    if (round_float(distance(p1, closest_to_p1)) > 0) {
+                                        set<std::array<double,3>> edge3 = {p1, closest_to_p1};
+                                        new_faces[index1].push_back(edge3);
+                                        
+                                        // Add to poly.edges if not present
+                                        set<int> edge3_indices;
+                                        for (const auto& point : edge3) {
+                                            int idx = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), point));
+                                            edge3_indices.insert(idx);
+                                        }
+                                        if (find(poly.edges.begin(), poly.edges.end(), edge3_indices) == poly.edges.end()) {
+                                            poly.edges.push_back(edge3_indices);
+                                        }
+                                    }
+                                    
+                                    if (round_float(distance(p2, closest_to_p2)) > 0) {
+                                        set<std::array<double,3>> edge3 = {p2, closest_to_p2};
+                                        new_faces[index1].push_back(edge3);
+                                        
+                                        // Add to poly.edges if not present
+                                        set<int> edge3_indices;
+                                        for (const auto& point : edge3) {
+                                            int idx = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), point));
+                                            edge3_indices.insert(idx);
+                                        }
+                                        if (find(poly.edges.begin(), poly.edges.end(), edge3_indices) == poly.edges.end()) {
+                                            poly.edges.push_back(edge3_indices);
+                                        }
+                                    }
+                                    
+                                    combine = true;
+                                    local_updated = true;
+                                    break;
+                                }
+                                // Similar logic for edge1 contained in edge2...
+                                else {
+                                    int points_on_edge2 = 0;
+                                    for (const auto& point : edge1) {
+                                        if (point_on_segment(edge2, point)) points_on_edge2++;
+                                    }
+                                    
+                                    if (points_on_edge2 == 2) {
+                                        // Handle edge1 contained in edge2 (similar to above)
+                                        new_faces[index1].erase(new_faces[index1].begin() + edge_index1);
+                                        new_faces[index2].erase(new_faces[index2].begin() + edge_index2);
+                                        
+                                        // Similar splitting logic...
+                                        combine = true;
+                                        local_updated = true;
+                                        break;
+                                    }
+                                }
+                                edge_index2++;
+                            }
+                            if (local_updated) break;
+                            edge_index1++;
+                        }
+                    }
+                    
+                    if (combine) {
+                        new_faces[index1].insert(new_faces[index1].end(), new_faces[index2].begin(), new_faces[index2].end());
+                        new_faces.erase(new_faces.begin() + index2);
+                    } else {
+                        index2++;
+                    }
+                }
+                index1++;
+            }
+            
+            // Convert new_faces back to edge indices and add to faces
+            for (const auto& face_edges : new_faces) {
+                set<int> face_indices;
+                for (const auto& edge : face_edges) {
+                    set<int> edge_indices;
+                    for (const auto& point : edge) {
+                        int idx = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), point));
+                        edge_indices.insert(idx);
+                    }
+                    auto edge_it = find(poly.edges.begin(), poly.edges.end(), edge_indices);
+                    if (edge_it != poly.edges.end()) {
+                        face_indices.insert(std::distance(poly.edges.begin(), edge_it));
+                    }
+                }
+                if (!face_indices.empty()) {
+                    faces.push_back(face_indices);
+                }
+            }
+        }
+        
+        poly.faces = faces;
+        
+        // Final collinear edge merging within faces
+        for (int face_index = 0; face_index < poly.faces.size(); face_index++) {
+            vector<int> face(poly.faces[face_index].begin(), poly.faces[face_index].end());
+            
+            int edge_index1 = 0;
+            while (edge_index1 < face.size()) {
+                int edge_index2 = edge_index1 + 1;
+                while (edge_index2 < face.size()) {
+                    set<std::array<double,3>> edge1, edge2;
+                    for (int idx : poly.edges[face[edge_index1]]) {
+                        edge1.insert(poly.verts[idx]);
+                    }
+                    for (int idx : poly.edges[face[edge_index2]]) {
+                        edge2.insert(poly.verts[idx]);
+                    }
+                    
+                    // Check if edges share exactly one point and are collinear
+                    set<std::array<double,3>> intersection;
+                    set_intersection(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(),
+                                    inserter(intersection, intersection.begin()));
+                    
+                    if (intersection.size() == 1) {
+                        set<std::array<double,3>> union_edge = edge1;
+                        union_edge.insert(edge2.begin(), edge2.end());
+                        
+                        if (colinear(union_edge)) {
+                            // Create symmetric difference for new edge
+                            set<std::array<double,3>> sym_diff;
+                            set<int> sym_diff_indices;
+                            
+                            for (const auto& point : edge1) {
+                                if (edge2.find(point) == edge2.end()) {
+                                    sym_diff.insert(point);
+                                    int idx = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), point));
+                                    sym_diff_indices.insert(idx);
+                                }
+                            }
+                            for (const auto& point : edge2) {
+                                if (edge1.find(point) == edge1.end()) {
+                                    sym_diff.insert(point);
+                                    int idx = std::distance(poly.verts.begin(), find(poly.verts.begin(), poly.verts.end(), point));
+                                    sym_diff_indices.insert(idx);
+                                }
+                            }
+                            
+                            // Add new edge if not present
+                            auto edge_it = find(poly.edges.begin(), poly.edges.end(), sym_diff_indices);
+                            int new_edge_idx;
+                            if (edge_it == poly.edges.end()) {
+                                poly.edges.push_back(sym_diff_indices);
+                                new_edge_idx = poly.edges.size() - 1;
+                            } else {
+                                new_edge_idx = std::distance(poly.edges.begin(), edge_it);
+                            }
+                            
+                            face[edge_index1] = new_edge_idx;
+                            face.erase(face.begin() + edge_index2);
+                            continue;
+                        }
+                    }
+                    edge_index2++;
+                }
+                edge_index1++;
+            }
+            poly.faces[face_index] = set<int>(face.begin(), face.end());
+        }
+        
+        // Final cleanup - remove unused edges
+        for (int edge_index = 0; edge_index < poly.edges.size();) {
+            int usage_count = 0;
+            for (const auto& face : poly.faces) {
+                if (face.find(edge_index) != face.end()) {
+                    usage_count++;
+                }
+            }
+            
+            if (usage_count < 2) {
+                for (auto& face : poly.faces) {
+                    set<int> new_face;
+                    for (int idx : face) {
+                        if (idx == edge_index) {
+                            continue;
+                        } else if (idx > edge_index) {
+                            new_face.insert(idx - 1);
+                        } else {
+                            new_face.insert(idx);
+                        }
+                    }
+                    face = new_face;
+                }
+                poly.edges.erase(poly.edges.begin() + edge_index);
+            } else {
+                edge_index++;
+            }
+        }
+        
+        // Remove unused vertices
         for (int vert_index = 0; vert_index < poly.verts.size();) {
-            bool all = true;
-            for (const set<int>& edge : poly.edges) {
+            bool is_used = false;
+            for (const auto& edge : poly.edges) {
                 if (edge.find(vert_index) != edge.end()) {
-                    all = false;
+                    is_used = true;
                     break;
                 }
             }
-            if (all) {
+            
+            if (!is_used) {
                 poly.verts.erase(poly.verts.begin() + vert_index);
-                for(int edge_index = 0; edge_index < poly.edges.size(); edge_index++) {
-                    set<int>::iterator it = poly.edges[edge_index].begin();
-                    int index1 = *it;
-                    it++;
-                    int index2 = *it;
-                    if (index1 > vert_index) {
-                        index1--;
+                // Update edge indices
+                for (auto& edge : poly.edges) {
+                    set<int> new_edge;
+                    for (int idx : edge) {
+                        if (idx > vert_index) {
+                            new_edge.insert(idx - 1);
+                        } else {
+                            new_edge.insert(idx);
+                        }
                     }
-                    if (index2 > vert_index) {
-                        index2--;
-                    }
-                    poly.edges[edge_index] = {index1, index2};
+                    edge = new_edge;
                 }
             } else {
                 vert_index++;
             }
         }
-        return poly; 
+        
+        // Remove empty faces
+        poly.faces.erase(
+            remove_if(poly.faces.begin(), poly.faces.end(), 
+                      [](const set<int>& face) { return face.empty(); }),
+            poly.faces.end()
+        );
+        
+        return poly;
     }
     Polyhedron intersect(Polyhedron other) {
         std::array<vector<set<set<std::array<double,3>>>>,2> edge_sets_per_poly;
@@ -1919,23 +2695,34 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
             Polyhedron poly = polys[poly_index];
             Polyhedron other_poly = polys[(poly_index-1+polys.size())%polys.size()];
             bool all = true;
-            for (const std::array<double,3>& point : poly.verts) {
-                if (!other_poly.is_inside(point)) {
+	        for (const set<int>& edge1 : poly.edges) {
+                bool any = false;
+	            for (const set<int>& edge2 : other_poly.edges) {
+                    set<std::array<double,3>> edge2_grounded;
+                    for (const int& index : edge2) {
+                        edge2_grounded.insert(other_poly.verts[index]);
+                    }
+                    bool broke = false;
+                    for (const int& index : edge1) {
+                        if (!Polyhedron::point_on_segment(edge2_grounded, poly.verts[index])) {
+                            broke = true;
+                            break;
+                        }
+                    }
+                    if (!broke) {
+                        any = true;
+                        break; 
+                    }
+                }
+                if (!any) {
                     all = false;
+                    break;
                 }
-            }
+	        }
             if (all) {
-                edge_sets_per_poly[poly_index].push_back(set<set<std::array<double,3>>>());
-                for (const set<int>& edge : poly.edges) {
-                    set<int>::iterator it = edge.begin();
-                    int p_i1 = *it;
-                    it++;
-                    int p_i2 = *it;
-                    edge_sets_per_poly[poly_index].front().insert({poly.verts[p_i1], poly.verts[p_i2]});
-                }
                 return edge_sets_to_poly(edge_sets_per_poly, polys);
             }
-        }
+        }        
         for (int poly_index = 0; poly_index < polys.size(); poly_index++) {
             set<set<std::array<double,3>>> new_edges;
             Polyhedron poly = polys[poly_index];
@@ -1948,8 +2735,10 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
                 //if (seen_verts.find(vert_index) != seen_verts.end()) {
                 //    continue;
                 //}
+                bool root_in_face = false;
                 if (other_poly.in_faces(vert).size()) {
-                    continue;
+                    //continue;
+                    root_in_face = true;
                 }
                 set<std::array<double,3>> leaves;
                 bool root_in_poly = other_poly.is_inside(vert);
@@ -1976,17 +2765,40 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
                         int v_i2 = *(difference.begin());
                         vector<FaceIntersection> intersects = other_poly.face_intersect({poly.verts[v_i1], poly.verts[v_i2]});
                         cout << "intersects size " << intersects.size() << endl;
+                        sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
+                        for (const FaceIntersection& intersect : intersects) {
+                            cout << intersect.point[0] << "," << intersect.point[1] << "," << intersect.point[2] << endl;
+                        }
+                        for (int i = 0; i < intersects.size();) {
+                            int j = i+1;
+                            while (j < intersects.size() && round_float(intersects[i].alpha) == round_float(intersects[j].alpha)) {
+                                j++;
+                            }
+                            if (j < intersects.size()) {
+                                new_edges.insert({intersects[i].point, intersects[j].point});
+                                cout << endl;
+                                cout << intersects[i].point[0] << "," << intersects[i].point[1] << "," << intersects[i].point[2] << endl;
+                                cout << intersects[j].point[0] << "," << intersects[j].point[1] << "," << intersects[j].point[2] << endl;
+                            }
+                            i = j+1;
+                            while (i < intersects.size() && round_float(intersects[i-1].alpha) == round_float(intersects[i].alpha)) {
+                                i++;
+                            }
+                        }
                         vector<int> in_faces = other_poly.in_faces(poly.verts[v_i2]);
                         if (in_faces.size()) {
-                            leaves.insert(poly.verts[v_i2]);
+                            if (!root_in_face) {
+                                leaves.insert(poly.verts[v_i2]);
+                            }
                             for (const int& face_index : in_faces){
                                 face_lookup[poly.verts[v_i2]].insert(face_index);
                             }
                             q.push(v_i2);
                         } else if (intersects.size()) {
-                            sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
                             cout << "alpha " << intersects[0].alpha << endl;
-                            leaves.insert(intersects[0].point);
+                            if (!root_in_face) {
+                                leaves.insert(intersects[0].point);
+                            }
                             for (int i = 0; i < intersects.size(); i++) {
                                 if (Polyhedron::round_float(intersects[i].alpha) == Polyhedron::round_float(intersects[0].alpha)) {
                                     face_lookup[intersects[i].point].insert(intersects[i].face_index);
@@ -1996,7 +2808,6 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
                             }
                             if (root_in_poly) {
                                 new_edges.insert({poly.verts[v_i1], intersects[0].point});
-                                cout << "point 1 " << poly.verts[1][0] << "," << poly.verts[1][1] << "," << poly.verts[1][2] << endl; 
                             } else {
                                 for (int i = 1; i < intersects.size(); i++) {
                                     if (round_float(intersects[i].alpha) > round_float(intersects[0].alpha)) {
@@ -2203,32 +3014,719 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
         }
         return edge_sets_to_poly(edge_sets_per_poly, polys);
     }
+    // C++ port of Python's add_subtract_helper function
+    static Polyhedron add_subtract_helper(Polyhedron poly1, Polyhedron poly2) {
+        vector<pair<int, int>> pairings;
+        
+        // Convert faces to sets of edges (equivalent to Python's faces1 and faces2)
+        vector<set<set<std::array<double,3>>>> faces1, faces2;
+        
+        for (const set<int>& face : poly1.faces) {
+            set<set<std::array<double,3>>> face_edges;
+            for (int edge_idx : face) {
+                set<std::array<double,3>> edge_verts;
+                for (int vert_idx : poly1.edges[edge_idx]) {
+                    edge_verts.insert(poly1.verts[vert_idx]);
+                }
+                face_edges.insert(edge_verts);
+            }
+            faces1.push_back(face_edges);
+        }
+        
+        for (const set<int>& face : poly2.faces) {
+            set<set<std::array<double,3>>> face_edges;
+            for (int edge_idx : face) {
+                set<std::array<double,3>> edge_verts;
+                for (int vert_idx : poly2.edges[edge_idx]) {
+                    edge_verts.insert(poly2.verts[vert_idx]);
+                }
+                face_edges.insert(edge_verts);
+            }
+            faces2.push_back(face_edges);
+        }
+        
+        // Find pairings between faces (exact match to Python)
+        for (int face_index1 = 0; face_index1 < faces1.size(); face_index1++) {
+            const set<set<std::array<double,3>>>& face1 = faces1[face_index1];
+            
+            for (int face_index2 = 0; face_index2 < faces2.size(); face_index2++) {
+                const set<set<std::array<double,3>>>& face2 = faces2[face_index2];
+                bool double_break = false;
+                
+                // Check if faces are coplanar
+                set<std::array<double,3>> all_points;
+                for (const set<std::array<double,3>>& edge : face1) {
+                    for (const std::array<double,3>& point : edge) {
+                        all_points.insert(point);
+                    }
+                }
+                for (const set<std::array<double,3>>& edge : face2) {
+                    for (const std::array<double,3>& point : edge) {
+                        all_points.insert(point);
+                    }
+                }
+                
+                if (coplanar(vector<std::array<double,3>>(all_points.begin(), all_points.end()))) {
+                    for (const set<std::array<double,3>>& edge1 : face1) {
+                        for (const set<std::array<double,3>>& edge2 : face2) {
+                            int points_on_edge1 = 0;
+                            int points_on_edge2 = 0;
+                            
+                            for (const std::array<double,3>& point : edge2) {
+                                if (point_on_segment(edge1, point)) {
+                                    points_on_edge1++;
+                                }
+                            }
+                            for (const std::array<double,3>& point : edge1) {
+                                if (point_on_segment(edge2, point)) {
+                                    points_on_edge2++;
+                                }
+                            }
+                            
+                            if (points_on_edge1 == 2) {
+                                pairings.push_back({face_index1, face_index2});
+                                double_break = true;
+                                break;
+                            } else if (points_on_edge2 == 2) {
+                                pairings.push_back({face_index1, face_index2});
+                                double_break = true;
+                                break;
+                            } else if (points_on_edge1 == 1 && points_on_edge2 == 1) {
+                                set<std::array<double,3>> intersection;
+                                set_intersection(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(),
+                                               inserter(intersection, intersection.begin()));
+                                if (intersection.empty()) {
+                                    pairings.push_back({face_index1, face_index2});
+                                    double_break = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (double_break) break;
+                    }
+                }
+            }
+        }
+        
+        // Create maps (fixed initialization)
+        vector<vector<set<set<std::array<double,3>>>>> faces;
+        faces.push_back(faces1);
+        faces.push_back(faces2);
+        
+        vector<map<int, vector<int>>> maps(2);
+        for (int i = 0; i < faces1.size(); i++) {
+            maps[0][i] = vector<int>();
+        }
+        for (int i = 0; i < faces2.size(); i++) {
+            maps[1][i] = vector<int>();
+        }
+        
+        for (const pair<int,int>& pairing : pairings) {
+            maps[0][pairing.first].push_back(pairing.second);
+            maps[1][pairing.second].push_back(pairing.first);
+        }
+        
+        set<pair<int, int>> visited;
+        vector<set<set<std::array<double,3>>>> new_faces;
+        
+        for (int poly_index = 0; poly_index < 2; poly_index++) {
+            for (int face_index = 0; face_index < faces[poly_index].size(); face_index++) {
+                pair<int, int> current_key = {poly_index, face_index};
+                if (visited.find(current_key) != visited.end()) continue;
+                
+                set<set<std::array<double,3>>> face = faces[poly_index][face_index];
+                queue<pair<int, int>> q;
+                q.push(current_key);
+                
+                while (!q.empty()) {
+                    pair<int, int> indices = q.front();
+                    q.pop();
+                    
+                    visited.insert(indices);
+                    
+                    int p_i1 = indices.first;
+                    int f_i1 = indices.second;
+                    int p_i2 = (p_i1 + 1) % 2;
+                    
+                    for (int f_i2 : maps[p_i1][f_i1]) {
+                        pair<int, int> next_key = {p_i2, f_i2};
+                        if (visited.find(next_key) != visited.end()) continue;
+                        
+                        q.push(next_key);
+                        
+                        for (const set<std::array<double,3>>& edge2 : faces[p_i2][f_i2]) {
+                            vector<set<std::array<double,3>>> face_vector(face.begin(), face.end());
+                            int edge_index1 = 0;
+                            vector<set<std::array<double,3>>> new_edges;
+                            bool combine = false;
+                            
+                            while (edge_index1 < face_vector.size()) {
+                                set<std::array<double,3>> edge1 = face_vector[edge_index1];
+                                
+                                int points_on_edge1 = 0;
+                                int points_on_edge2 = 0;
+                                
+                                for (const std::array<double,3>& point : edge2) {
+                                    if (point_on_segment(edge1, point)) {
+                                        points_on_edge1++;
+                                    }
+                                }
+                                for (const std::array<double,3>& point : edge1) {
+                                    if (point_on_segment(edge2, point)) {
+                                        points_on_edge2++;
+                                    }
+                                }
+                                
+                                if (points_on_edge1 == 2) {
+                                    face_vector.erase(face_vector.begin() + edge_index1);
+                                    
+                                    vector<std::array<double,3>> edge1_vec(edge1.begin(), edge1.end());
+                                    std::array<double,3> p1 = edge1_vec[0];
+                                    std::array<double,3> p2 = edge1_vec[1];
+                                    
+                                    // Find closest point in edge2 to p1
+                                    vector<pair<double, std::array<double,3>>> distances_p1;
+                                    for (const std::array<double,3>& point : edge2) {
+                                        distances_p1.push_back({distance(p1, point), point});
+                                    }
+                                    sort(distances_p1.begin(), distances_p1.end());
+                                    
+                                    if (round_float(distances_p1[0].first) > 0) {
+                                        set<std::array<double,3>> edge3 = {p1, distances_p1[0].second};
+                                        new_edges.push_back(edge3);
+                                    }
+                                    
+                                    // Find closest point in edge2 to p2
+                                    vector<pair<double, std::array<double,3>>> distances_p2;
+                                    for (const std::array<double,3>& point : edge2) {
+                                        distances_p2.push_back({distance(p2, point), point});
+                                    }
+                                    sort(distances_p2.begin(), distances_p2.end());
+                                    
+                                    if (round_float(distances_p2[0].first) > 0) {
+                                        set<std::array<double,3>> edge3 = {p2, distances_p2[0].second};
+                                        new_edges.push_back(edge3);
+                                    }
+                                    combine = true;
+                                    
+                                } else if (points_on_edge2 == 2) {
+                                    face_vector.erase(face_vector.begin() + edge_index1);
+                                    
+                                    vector<std::array<double,3>> edge2_vec(edge2.begin(), edge2.end());
+                                    std::array<double,3> p1 = edge2_vec[0];
+                                    std::array<double,3> p2 = edge2_vec[1];
+                                    
+                                    // Similar logic for edge2
+                                    vector<pair<double, std::array<double,3>>> distances_p1;
+                                    for (const std::array<double,3>& point : edge1) {
+                                        distances_p1.push_back({distance(p1, point), point});
+                                    }
+                                    sort(distances_p1.begin(), distances_p1.end());
+                                    
+                                    if (round_float(distances_p1[0].first) > 0) {
+                                        set<std::array<double,3>> edge3 = {p1, distances_p1[0].second};
+                                        new_edges.push_back(edge3);
+                                    }
+                                    
+                                    vector<pair<double, std::array<double,3>>> distances_p2;
+                                    for (const std::array<double,3>& point : edge1) {
+                                        distances_p2.push_back({distance(p2, point), point});
+                                    }
+                                    sort(distances_p2.begin(), distances_p2.end());
+                                    
+                                    if (round_float(distances_p2[0].first) > 0) {
+                                        set<std::array<double,3>> edge3 = {p2, distances_p2[0].second};
+                                        new_edges.push_back(edge3);
+                                    }
+                                    combine = true;
+                                    
+                                } else if (points_on_edge1 == 1 && points_on_edge2 == 1) {
+                                    set<std::array<double,3>> intersection;
+                                    set_intersection(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(),
+                                                   inserter(intersection, intersection.begin()));
+                                    
+                                    if (intersection.empty()) {
+                                        face_vector.erase(face_vector.begin() + edge_index1);
+                                        
+                                        vector<std::array<double,3>> edge1_vec(edge1.begin(), edge1.end());
+                                        vector<std::array<double,3>> edge2_vec(edge2.begin(), edge2.end());
+                                        std::array<double,3> p1 = edge1_vec[0];
+                                        std::array<double,3> p2 = edge1_vec[1];
+                                        std::array<double,3> p3 = edge2_vec[0];
+                                        std::array<double,3> p4 = edge2_vec[1];
+                                        
+                                        if (point_on_segment(edge2, p1)) {
+                                            swap(p1, p2);
+                                        }
+                                        if (point_on_segment(edge1, p4)) {
+                                            swap(p3, p4);
+                                        }
+                                        
+                                        if (round_float(distance(p1, p3)) > 0) {
+                                            set<std::array<double,3>> edge3 = {p1, p3};
+                                            new_edges.push_back(edge3);
+                                        }
+                                        if (round_float(distance(p2, p4)) > 0) {
+                                            set<std::array<double,3>> edge3 = {p2, p4};
+                                            new_edges.push_back(edge3);
+                                        }
+                                        combine = true;
+                                        
+                                    } else if (intersection.size() == 1) {
+                                        set<std::array<double,3>> union_set;
+                                        set_union(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(),
+                                                inserter(union_set, union_set.begin()));
+                                        if (colinear(vector<std::array<double,3>>(union_set.begin(), union_set.end()))) {
+                                            face_vector.erase(face_vector.begin() + edge_index1);
+                                            
+                                            // Remove edge2 from new_edges if present
+                                            vector<set<std::array<double,3>>>::iterator it = find(new_edges.begin(), new_edges.end(), edge2);
+                                            if (it != new_edges.end()) {
+                                                new_edges.erase(it);
+                                            }
+                                            
+                                            // Add symmetric difference
+                                            set<std::array<double,3>> symmetric_diff;
+                                            set_symmetric_difference(edge1.begin(), edge1.end(), edge2.begin(), edge2.end(),
+                                                                   inserter(symmetric_diff, symmetric_diff.begin()));
+                                            new_edges.push_back(symmetric_diff);
+                                            combine = true;
+                                        } else {
+                                            edge_index1++;
+                                        }
+                                    } else {
+                                        edge_index1++;
+                                    }
+                                } else {
+                                    edge_index1++;
+                                }
+                            }
+                            
+                            // Update face
+                            face.clear();
+                            for (const set<std::array<double,3>>& edge : face_vector) {
+                                face.insert(edge);
+                            }
+                            
+                            if (combine) {
+                                for (const set<std::array<double,3>>& edge : new_edges) {
+                                    face.insert(edge);
+                                }
+                            } else {
+                                face.insert(edge2);
+                            }
+                        }
+                    }
+                }
+                
+                // Convert face to circuits
+                set<vector<std::array<double,3>>> circuits = circuit_helper(face);
+                
+                // Remove collinear points from circuits
+                set<vector<std::array<double,3>>> filtered_circuits;
+                for (const vector<std::array<double,3>>& circuit : circuits) {
+                    vector<std::array<double,3>> filtered_circuit;
+                    for (int i = 0; i < circuit.size(); i++) {
+                        std::array<double,3> prev = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                        std::array<double,3> curr = circuit[i];
+                        std::array<double,3> next = circuit[(i + 1) % circuit.size()];
+                        
+                        if (!colinear(vector<std::array<double,3>>{prev, curr, next})) {
+                            filtered_circuit.push_back(curr);
+                        }
+                    }
+                    if (!filtered_circuit.empty()) {
+                        filtered_circuits.insert(filtered_circuit);
+                    }
+                }
+                
+                vector<std::array<double,3>>* exterior = find_exterior_circuit(filtered_circuits);
+                if (exterior == NULL) {
+                    for (const vector<std::array<double,3>>& circuit : filtered_circuits) {
+                        set<set<std::array<double,3>>> circuit_face;
+                        for (int i = 0; i < circuit.size(); i++) {
+                            std::array<double,3> p1 = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                            std::array<double,3> p2 = circuit[i];
+                            circuit_face.insert({p1, p2});
+                        }
+                        new_faces.push_back(circuit_face);
+                    }
+                } else {
+                    new_faces.push_back(face);
+                    delete exterior;
+                }
+            }
+        }
+        
+        // Handle edge intersections within faces
+        for (int face_index = 0; face_index < new_faces.size(); face_index++) {
+            bool updated = true;
+            while (updated) {
+                updated = false;
+                for (const set<std::array<double,3>>& edge1 : new_faces[face_index]) {
+                    for (const set<std::array<double,3>>& edge2 : new_faces[face_index]) {
+                        if (edge1 == edge2) continue;
+                        
+                        std::array<double,3>* intersect = intersect_segments(edge1, edge2);
+                        if (intersect != NULL) {
+                            bool intersect_on_endpoint = false;
+                            for (const std::array<double,3>& point : edge1) {
+                                if (distance(*intersect, point) < 0.001) {
+                                    intersect_on_endpoint = true;
+                                    break;
+                                }
+                            }
+                            if (!intersect_on_endpoint) {
+                                for (const std::array<double,3>& point : edge2) {
+                                    if (distance(*intersect, point) < 0.001) {
+                                        intersect_on_endpoint = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (!intersect_on_endpoint) {
+                                new_faces[face_index].erase(edge1);
+                                new_faces[face_index].erase(edge2);
+                                
+                                vector<std::array<double,3>> edge1_vec(edge1.begin(), edge1.end());
+                                vector<std::array<double,3>> edge2_vec(edge2.begin(), edge2.end());
+                                
+                                new_faces[face_index].insert({edge1_vec[0], *intersect});
+                                new_faces[face_index].insert({edge1_vec[1], *intersect});
+                                new_faces[face_index].insert({edge2_vec[0], *intersect});
+                                new_faces[face_index].insert({edge2_vec[1], *intersect});
+                                
+                                updated = true;
+                                delete intersect;
+                                break;
+                            }
+                            delete intersect;
+                        }
+                    }
+                    if (updated) break;
+                }
+            }
+        }
+        
+        // Merge coplanar faces
+        bool updated = true;
+        while (updated) {
+            updated = false;
+            for (int face_index1 = 0; face_index1 < new_faces.size(); face_index1++) {
+                for (int face_index2 = face_index1 + 1; face_index2 < new_faces.size(); face_index2++) {
+                    set<std::array<double,3>> all_points;
+                    for (const set<std::array<double,3>>& edge : new_faces[face_index1]) {
+                        for (const std::array<double,3>& point : edge) {
+                            all_points.insert(point);
+                        }
+                    }
+                    for (const set<std::array<double,3>>& edge : new_faces[face_index2]) {
+                        for (const std::array<double,3>& point : edge) {
+                            all_points.insert(point);
+                        }
+                    }
+                    
+                    if (coplanar(vector<std::array<double,3>>(all_points.begin(), all_points.end()))) {
+                        set<set<std::array<double,3>>> combined_face;
+                        set_union(new_faces[face_index1].begin(), new_faces[face_index1].end(),
+                                new_faces[face_index2].begin(), new_faces[face_index2].end(),
+                                inserter(combined_face, combined_face.begin()));
+                        
+                        set<vector<std::array<double,3>>> circuits = circuit_helper(combined_face);
+                        
+                        // Filter collinear points
+                        set<vector<std::array<double,3>>> filtered_circuits;
+                        for (const vector<std::array<double,3>>& circuit : circuits) {
+                            vector<std::array<double,3>> filtered_circuit;
+                            for (int i = 0; i < circuit.size(); i++) {
+                                std::array<double,3> prev = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                                std::array<double,3> curr = circuit[i];
+                                std::array<double,3> next = circuit[(i + 1) % circuit.size()];
+                                
+                                if (!colinear(vector<std::array<double,3>>{prev, curr, next})) {
+                                    filtered_circuit.push_back(curr);
+                                }
+                            }
+                            if (!filtered_circuit.empty()) {
+                                filtered_circuits.insert(filtered_circuit);
+                            }
+                        }
+                        
+                        vector<std::array<double,3>>* exterior = find_exterior_circuit(filtered_circuits);
+                        if (exterior != NULL) {
+                            new_faces.erase(new_faces.begin() + face_index2);
+                            new_faces.erase(new_faces.begin() + face_index1);
+                            new_faces.push_back(combined_face);
+                            updated = true;
+                            delete exterior;
+                            break;
+                        }
+                        if (exterior) delete exterior;
+                    }
+                }
+                if (updated) break;
+            }
+        }
+        
+        // Final circuit processing
+        int face_index = 0;
+        while (face_index < new_faces.size()) {
+            set<vector<std::array<double,3>>> circuits = circuit_helper(new_faces[face_index]);
+            
+            // Filter collinear points
+            set<vector<std::array<double,3>>> filtered_circuits;
+            for (const vector<std::array<double,3>>& circuit : circuits) {
+                vector<std::array<double,3>> filtered_circuit;
+                for (const std::array<double,3>& x : circuit) {
+                    bool is_collinear = false;
+                    for (int i = 0; i < circuit.size(); i++) {
+                        if (circuit[i] == x) {
+                            std::array<double,3> prev = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                            std::array<double,3> next = circuit[(i + 1) % circuit.size()];
+                            if (colinear(vector<std::array<double,3>>{prev, x, next})) {
+                                is_collinear = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!is_collinear) {
+                        filtered_circuit.push_back(x);
+                    }
+                }
+                if (!filtered_circuit.empty()) {
+                    filtered_circuits.insert(filtered_circuit);
+                }
+            }
+            
+            vector<std::array<double,3>>* exterior = find_exterior_circuit(filtered_circuits);
+            if (exterior == NULL) {
+                new_faces.erase(new_faces.begin() + face_index);
+                for (const vector<std::array<double,3>>& circuit : filtered_circuits) {
+                    set<set<std::array<double,3>>> circuit_face;
+                    for (int i = 0; i < circuit.size(); i++) {
+                        std::array<double,3> p1 = circuit[(i - 1 + circuit.size()) % circuit.size()];
+                        std::array<double,3> p2 = circuit[i];
+                        circuit_face.insert({p1, p2});
+                    }
+                    new_faces.push_back(circuit_face);
+                }
+            } else {
+                face_index++;
+                delete exterior;
+            }
+        }
+        
+        // Build final polyhedron
+        Polyhedron poly;
+        
+        // Collect all unique vertices
+        set<std::array<double,3>> all_vertices;
+        for (const set<set<std::array<double,3>>>& face : new_faces) {
+            for (const set<std::array<double,3>>& edge : face) {
+                for (const std::array<double,3>& point : edge) {
+                    all_vertices.insert(point);
+                }
+            }
+        }
+        poly.verts = vector<std::array<double,3>>(all_vertices.begin(), all_vertices.end());
+        
+        // Collect all unique edges
+        set<set<int>> all_edges;
+        for (const set<set<std::array<double,3>>>& face : new_faces) {
+            for (const set<std::array<double,3>>& edge : face) {
+                set<int> edge_indices;
+                for (const std::array<double,3>& point : edge) {
+                    auto it = find(poly.verts.begin(), poly.verts.end(), point);
+                    edge_indices.insert(it - poly.verts.begin());
+                }
+                all_edges.insert(edge_indices);
+            }
+        }
+        poly.edges = vector<set<int>>(all_edges.begin(), all_edges.end());
+        
+        // Build faces
+        for (const set<set<std::array<double,3>>>& face : new_faces) {
+            if (face.empty()) continue;
+            
+            set<int> face_indices;
+            for (const set<std::array<double,3>>& edge : face) {
+                set<int> edge_indices;
+                for (const std::array<double,3>& point : edge) {
+                    auto it = find(poly.verts.begin(), poly.verts.end(), point);
+                    edge_indices.insert(it - poly.verts.begin());
+                }
+                auto edge_it = find(poly.edges.begin(), poly.edges.end(), edge_indices);
+                face_indices.insert(edge_it - poly.edges.begin());
+            }
+            poly.faces.push_back(face_indices);
+        }
+        
+        return poly;
+    }
+    Polyhedron subtract(Polyhedron other) {
+        Polyhedron new_poly;
+        new_poly.verts = this->verts;
+        new_poly.edges = this->edges;
+        new_poly.faces = this->faces;
+        
+        Polyhedron poly = this->intersect(other);
+        return Polyhedron::add_subtract_helper(poly, new_poly);
+    }
+    
+    Polyhedron add(Polyhedron other) {
+        Polyhedron new_poly1;
+        new_poly1.verts = other.verts;
+        new_poly1.edges = other.edges;
+        new_poly1.faces = other.faces;
+        
+        Polyhedron new_poly2;
+        new_poly2.verts = this->verts;
+        new_poly2.edges = this->edges;
+        new_poly2.faces = this->faces;
+
+        Polyhedron poly = this->intersect(other);
+
+        new_poly1 = new_poly1.subtract(poly);
+        cout << new_poly1.verts.size() << endl;
+        return Polyhedron::add_subtract_helper(new_poly1, new_poly2);
+    }    
 };
 
 int main(int argc, char* argv[]) {
+    // Default parameters
     string filename1 = "poly1.ply";
-    if (argc > 1) {
-        filename1 = argv[0];
-    }
-    Polyhedron poly1;
-    poly1.load(filename1);
     string filename2 = "poly2.ply";
-    if (argc > 2) {
-        filename1 = argv[1];
+    string filename3 = "out.ply";
+    string operation = "intersect";  // Default operation
+    
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        string arg = argv[i];
+        
+        if (arg == "-h" || arg == "--help") {
+            cout << "Usage: " << argv[0] << " [options]" << endl;
+            cout << "Options:" << endl;
+            cout << "  -i, --input1 <file>     First input polyhedron file (default: poly1.ply)" << endl;
+            cout << "  -j, --input2 <file>     Second input polyhedron file (default: poly2.ply)" << endl;
+            cout << "  -o, --output <file>     Output file (default: out.ply)" << endl;
+            cout << "  -op, --operation <op>   Operation: intersect, add, subtract (default: intersect)" << endl;
+            cout << "  -h, --help              Show this help message" << endl;
+            cout << endl;
+            cout << "Examples:" << endl;
+            cout << "  " << argv[0] << " -i cube.ply -j sphere.ply -op intersect -o result.ply" << endl;
+            cout << "  " << argv[0] << " -op add" << endl;
+            cout << "  " << argv[0] << " --operation subtract --output diff.ply" << endl;
+            return 0;
+        }
+        else if ((arg == "-i" || arg == "--input1") && i + 1 < argc) {
+            filename1 = argv[++i];
+        }
+        else if ((arg == "-j" || arg == "--input2") && i + 1 < argc) {
+            filename2 = argv[++i];
+        }
+        else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+            filename3 = argv[++i];
+        }
+        else if ((arg == "-op" || arg == "--operation") && i + 1 < argc) {
+            operation = argv[++i];
+            // Validate operation
+            if (operation != "intersect" && operation != "add" && operation != "subtract") {
+                cerr << "Error: Invalid operation '" << operation << "'. Must be 'intersect', 'add', or 'subtract'." << endl;
+                return 1;
+            }
+        }
+        else if (i == 1 && arg.find("-") != 0) {
+            // First positional argument (backward compatibility)
+            filename1 = arg;
+        }
+        else if (i == 2 && arg.find("-") != 0) {
+            // Second positional argument (backward compatibility)
+            filename2 = arg;
+        }
+        else if (i == 3 && arg.find("-") != 0) {
+            // Third positional argument (backward compatibility)
+            filename3 = arg;
+        }
+        else if (arg.find("-") == 0) {
+            cerr << "Error: Unknown option '" << arg << "'. Use -h for help." << endl;
+            return 1;
+        }
     }
+    
+    cout << "Loading polyhedra..." << endl;
+    cout << "Input 1: " << filename1 << endl;
+    cout << "Input 2: " << filename2 << endl;
+    cout << "Output: " << filename3 << endl;
+    cout << "Operation: " << operation << endl;
+    cout << endl;
+    
+    // Load first polyhedron
+    Polyhedron poly1;
+    if (!poly1.load(filename1)) {
+        cerr << "Error: Could not load " << filename1 << endl;
+        return 1;
+    }
+    cout << "Loaded poly1: " << poly1.verts.size() << " vertices, " 
+         << poly1.edges.size() << " edges, " << poly1.faces.size() << " faces" << endl;
+    
+    // Load second polyhedron
     Polyhedron poly2;
-    poly2.load("poly2.ply");
-    string filename3 = "out.txt";
-    if (argc > 3) {
-        filename3 = argv[2];
+    if (!poly2.load(filename2)) {
+        cerr << "Error: Could not load " << filename2 << endl;
+        return 1;
     }
+    cout << "Loaded poly2: " << poly2.verts.size() << " vertices, " 
+         << poly2.edges.size() << " edges, " << poly2.faces.size() << " faces" << endl;
+    cout << endl;
+    
+    // Perform the requested operation
+    cout << "Performing " << operation << " operation..." << endl;
     auto start = std::chrono::high_resolution_clock::now();
-    Polyhedron poly3 = poly1.intersect(poly2);
+    
+    Polyhedron result;
+    try {
+        if (operation == "intersect") {
+            result = poly1.intersect(poly2);
+        }
+        else if (operation == "add") {
+            result = poly1.add(poly2);
+        }
+        else if (operation == "subtract") {
+            result = poly1.subtract(poly2);
+        }
+    }
+    catch (const exception& e) {
+        cerr << "Error during " << operation << " operation: " << e.what() << endl;
+        return 1;
+    }
+    
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    std::cout << "Time: " << duration.count() / 1000000.0 << " s" << std::endl;
-    for (const std::array<double,3> vert : poly3.verts) {
-        cout << "[" << vert[0] << "," << vert[1] << "," << vert[2] << "]" << endl;
+    
+    cout << "Operation completed in " << duration.count() / 1000000.0 << " seconds" << endl;
+    cout << "Result: " << result.verts.size() << " vertices, " 
+         << result.edges.size() << " edges, " << result.faces.size() << " faces" << endl;
+    cout << endl;
+    
+    // Output vertices (for debugging)
+    if (result.verts.size() <= 50) {  // Only print if not too many vertices
+        cout << "Result vertices:" << endl;
+        for (const std::array<double,3>& vert : result.verts) {
+            cout << "[" << vert[0] << "," << vert[1] << "," << vert[2] << "]" << endl;
+        }
+    } else {
+        cout << "Too many vertices to display (" << result.verts.size() << " vertices)" << endl;
     }
+    
+    // Save result to file
+    cout << "Saving result to " << filename3 << "..." << endl;
+    if (result.dump(filename3)) {
+        cout << "Result saved successfully." << endl;
+    } else {
+        cerr << "Error: Could not save result to " << filename3 << endl;
+        return 1;
+    }
+    
     return 0;
 }
