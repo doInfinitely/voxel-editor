@@ -1671,7 +1671,7 @@ class Polyhedron:
                                     edge = frozenset([point1,point2])
                                     if not any(point != point1 and point != point2 and Polyhedron.point_on_segment(edge, point) for point in cofacial_points):
                                         edges.add(edge)
-                                    break
+                                        break
                     edges = list(edges)
                     '''
                     updated = True
@@ -1707,13 +1707,14 @@ class Polyhedron:
                                 poly.edges.append(edge)
                                 new_face.add(len(poly.edges)-1)
                         print(circuit)
-                        for face_index, face in enumerate(poly.faces):
-                            pass
+                        #for face_index, face in enumerate(poly.faces):
+                        #    pass
                             #if Polyhedron.find_exterior_circuit(poly.circuits(face_index)|{circuit}):
                             #    poly.faces[face_index] |= new_face
                             #    break
-                        else:
-                            poly.faces.append(frozenset(new_face))
+                        #else:
+                        poly.faces.append(frozenset(new_face))
+        print('after cofacial', len(poly.verts), len(poly.edges), len(poly.faces))
         edge_index = 0
         while edge_index < len(poly.edges):
             if sum(edge_index in face for face in poly.faces) < 2:
@@ -1774,6 +1775,7 @@ class Polyhedron:
             circuits = poly.circuits(face_index)
             circuit_sets = [{circuit} for circuit in circuits]
             index1 = 0
+            print('CIRCUITS', circuits)
             while index1 < len(circuit_sets):
                 index2 = index1 + 1
                 while index2 < len(circuit_sets):
@@ -1785,6 +1787,7 @@ class Polyhedron:
                     else:
                         index2 += 1
                 index1 += 1
+            print("CIRCUIT SETS", circuit_sets)
             new_faces = []
             for circuit_set in circuit_sets:
                 face = set()
@@ -1916,6 +1919,7 @@ class Polyhedron:
                 index1 += 1
             faces.extend([frozenset(poly.edges.index(frozenset(poly.verts.index(point) for point in edge)) for edge in face) for face in new_faces])
         poly.faces = faces
+        print('FACES', faces)
         for face_index, face in enumerate(poly.faces):
             face = list(face)
             edge_index1 = 0
@@ -2149,6 +2153,7 @@ class Polyhedron:
         new_poly.edges = list(self.edges)
         new_poly.faces = list(self.faces)
         poly = self.intersect(other, use_cpp)
+        print(len(poly.verts), len(poly.edges), len(poly.faces))
         return Polyhedron.add_subtract_helper(poly,new_poly)
     def add(self, other, use_cpp=True):
         new_poly1 = Polyhedron()

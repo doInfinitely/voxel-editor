@@ -1786,6 +1786,8 @@ class Polyhedron {
                         set<int> difference;
                         set_difference(edge.begin(), edge.end(), temp.begin(), temp.end(), std::inserter(difference, difference.begin()));
                         int v_i2 = *(difference.begin());
+                        cout << "edge " << poly.verts[v_i1][0] << "," << poly.verts[v_i1][1] << "," << poly.verts[v_i1][2] << " "; 
+                        cout << poly.verts[v_i2][0] << "," << poly.verts[v_i2][1] << "," << poly.verts[v_i2][2] << endl; 
                         vector<FaceIntersection> intersects = other_poly.face_intersect({poly.verts[v_i1], poly.verts[v_i2]});
                         cout << "intersects size " << intersects.size() << endl;
                         sort(intersects.begin(), intersects.end(), Polyhedron::compare_face_intersections);
@@ -1800,7 +1802,7 @@ class Polyhedron {
                             if (j < intersects.size()) {
                                 new_edges.insert({intersects[i].point, intersects[j].point});
                                 cout << endl;
-                                cout << intersects[i].point[0] << "," << intersects[i].point[1] << "," << intersects[i].point[2] << endl;
+                                cout << intersects[i].point[0] << "," << intersects[i].point[1] << "," << intersects[i].point[2] << " ";
                                 cout << intersects[j].point[0] << "," << intersects[j].point[1] << "," << intersects[j].point[2] << endl;
                             }
                             i = j+1;
@@ -1809,15 +1811,7 @@ class Polyhedron {
                             }
                         }
                         vector<int> in_faces = other_poly.in_faces(poly.verts[v_i2]);
-                        if (in_faces.size()) {
-                            if (!root_in_face) {
-                                leaves.insert(poly.verts[v_i2]);
-                            }
-                            for (const int& face_index : in_faces){
-                                face_lookup[poly.verts[v_i2]].insert(face_index);
-                            }
-                            q.push(v_i2);
-                        } else if (intersects.size()) {
+                        if (intersects.size()) {
                             cout << "alpha " << intersects[0].alpha << endl;
                             if (!root_in_face) {
                                 leaves.insert(intersects[0].point);
@@ -1840,6 +1834,14 @@ class Polyhedron {
                                     }
                                 }
                             }
+                        } else if (in_faces.size()) {
+                            if (!root_in_face) {
+                                leaves.insert(poly.verts[v_i2]);
+                            }
+                            for (const int& face_index : in_faces){
+                                face_lookup[poly.verts[v_i2]].insert(face_index);
+                            }
+                            q.push(v_i2);
                         } else {
                             q.push(v_i2);
                             if (root_in_poly) {

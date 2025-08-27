@@ -2786,15 +2786,7 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
                             }
                         }
                         vector<int> in_faces = other_poly.in_faces(poly.verts[v_i2]);
-                        if (in_faces.size()) {
-                            if (!root_in_face) {
-                                leaves.insert(poly.verts[v_i2]);
-                            }
-                            for (const int& face_index : in_faces){
-                                face_lookup[poly.verts[v_i2]].insert(face_index);
-                            }
-                            q.push(v_i2);
-                        } else if (intersects.size()) {
+                        if (intersects.size()) {
                             cout << "alpha " << intersects[0].alpha << endl;
                             if (!root_in_face) {
                                 leaves.insert(intersects[0].point);
@@ -2817,6 +2809,14 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
                                     }
                                 }
                             }
+                        } else if (in_faces.size()) {
+                            if (!root_in_face) {
+                                leaves.insert(poly.verts[v_i2]);
+                            }
+                            for (const int& face_index : in_faces){
+                                face_lookup[poly.verts[v_i2]].insert(face_index);
+                            }
+                            q.push(v_i2);
                         } else {
                             q.push(v_i2);
                             if (root_in_poly) {
