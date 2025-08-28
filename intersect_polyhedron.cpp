@@ -606,19 +606,49 @@ class Polyhedron {
         return output;
     }
     static vector<std::array<double,3>> make_planar(vector<std::array<double,3>> circuit) {
-        std::array<double,3> vec1 = {circuit[1][0]-circuit[0][0], circuit[1][1]-circuit[0][1], circuit[1][2]-circuit[0][2]};
-        std::array<double,3> vec2 = {circuit[2][0]-circuit[0][0], circuit[2][1]-circuit[0][1], circuit[2][2]-circuit[0][2]};
-        std::array<double,3> vec0 = cross3D(vec1,vec2);
-        vec1 = {0,vec0[1],vec0[2]};
-        vec2 = {vec0[0],0,vec0[2]};
-        std::array<double,3> angles = {0,0,0};
-        if (Polyhedron::distance(vec1) != 0) {
-            angles[0] = -acos(vec1[2]/distance(vec1));
+        // Calculate vec1 and vec2
+        std::array<double,3> vec1;
+        std::array<double,3> vec2;
+        for (int i = 0; i < 3; i++) {
+            vec1[i] = circuit[1][i] - circuit[0][i];
+            vec2[i] = circuit[2][i] - circuit[0][i];
         }
-        if (Polyhedron::distance(vec2) != 0) {
-            angles[1] = -acos(vec2[2]/distance(vec2));
+        
+        // Calculate cross product vec0 = cross3D(vec1, vec2)
+        std::array<double,3> vec0 = cross3D(vec1, vec2);
+        
+        // Reassign vec1 and vec2
+        vec1 = {0.0, vec0[1], vec0[2]};
+        vec2 = {vec0[0], 0.0, vec0[2]};
+        
+        // Calculate angles
+        std::array<double,3> angles = {0.0, 0.0, 0.0};
+        
+        // Calculate angles[0] with zero division protection
+        double vec1_distance = distance(vec1);
+        if (vec1_distance != 0.0) {
+            double cos_val = vec1[2] / vec1_distance;
+            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
+            angles[0] = -acos(cos_val);
         }
-        return rotate(circuit, angles);
+        
+        // Calculate angles[1] with zero division protection  
+        double vec2_distance = distance(vec2);
+        if (vec2_distance != 0.0) {
+            double cos_val = vec2[2] / vec2_distance;
+            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
+            angles[1] = -acos(cos_val);
+        }
+        
+        // Rotate the circuit and project to 2D (set z=0)
+        vector<std::array<double,3>> rotated_circuit = rotate(circuit, angles);
+        vector<std::array<double,3>> result;
+        
+        for (const std::array<double,3>& point : rotated_circuit) {
+            result.push_back({point[0], point[1], 0.0});
+        }
+        
+        return result;
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
         double summa = 0;
@@ -671,9 +701,9 @@ class Polyhedron {
             std::reverse(circuit.begin(),circuit.end());
         }
         vector<bool> is_convex = clockwise_angles(planar);
-        for (int i = 0; i < is_convex.size(); i++) {
-            //cout << is_convex[i] ;
-        }
+        //for (int i = 0; i < is_convex.size(); i++) {
+        //    cout << is_convex[i] ;
+        //}
         //cout << endl;
         for (int i = 0; i < circuit.size(); i++) {
             if (is_convex[i]) {
@@ -713,14 +743,6 @@ class Polyhedron {
         vector<std::array<double,3>> remainder = circuit;
         //cout << "triangulate start" << endl;
         while (remainder.size() >3) {
-            for (int i = 0; i < remainder.size();) {
-                if (Polyhedron::colinear(set<std::array<double,3>>{remainder[(i-1+remainder.size())%remainder.size()],remainder[i],remainder[(i+1)%remainder.size()]})) {
-                    //cout << "colinear " << remainder[i][0] << " " << remainder[i][1] << " " << remainder[i][2] << endl;
-                    remainder.erase(remainder.begin()+i);
-                } else {
-                    i++;
-                }
-            }
             EarClip ear_clip = Polyhedron::clip_ear(remainder);
             remainder = ear_clip.remainder;
             //for (const std::array<double,3>& point : ear_clip.remainder) {
@@ -728,9 +750,9 @@ class Polyhedron {
             //}
             //cout << "; ";
             output.push_back(ear_clip.ear);
-            for (const std::array<double,3>& point : ear_clip.ear) {
-                //cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
-            }
+            //for (const std::array<double,3>& point : ear_clip.ear) {
+            //    cout << "[" << point[0] << "," << point[1] << "," << point[2] << "] ";
+            //}
             //cout << endl;
         }
         output.push_back({remainder[0],remainder[1],remainder[2]});
@@ -833,7 +855,7 @@ class Polyhedron {
     vector<FaceIntersection> face_intersect(std::array<std::array<double,3>,2> segment) {
         vector<FaceIntersection> output;
         for (int face_index = 0; face_index < faces.size(); face_index++) {
-            vector<std::array<double,3>>* circuit = circuit_cut(this->circuits(face_index)); 
+            vector<std::array<double,3>>* circuit = circuit_cut(make_clockwise(this->circuits(face_index))); 
             vector<std::array<double,3>> temp(circuit->begin(),circuit->end());
             temp.push_back(segment[0]);
             temp.push_back(segment[1]);
@@ -1039,7 +1061,13 @@ class Polyhedron {
     vector<int> in_faces(std::array<double,3> point) {
 	vector<int> output;
         for (int face_index = 0; face_index < faces.size(); face_index++) {
-            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(this->circuits(face_index));
+            vector<std::array<double,3>>* circuit = Polyhedron::circuit_cut(make_clockwise(this->circuits(face_index)));
+            if (circuit != NULL) {
+                //for (const std::array<double,3>& point : *circuit) {
+                //    cout << point[0] << "," << point[1] << "," << point[2] << " ";
+                //}
+                //cout << endl; 
+            }
             for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
                 if (Polyhedron::inside_triangle(triangle, point)) {
                     output.push_back(face_index);
@@ -1058,7 +1086,7 @@ class Polyhedron {
         std::array<double,3> vec = {((double)rand()/RAND_MAX)*2-1,((double)rand()/RAND_MAX)*2-1,((double)rand()/RAND_MAX)*2-1};
         vector<IsInsideIntersection> output;
         for (int face_index = 0; face_index < faces.size(); face_index++) {
-            vector<std::array<double,3>>* circuit = circuit_cut(this->circuits(face_index));
+            vector<std::array<double,3>>* circuit = circuit_cut(make_clockwise(this->circuits(face_index)));
             for (const std::array<std::array<double,3>,3>& triangle : Polyhedron::triangulate(*circuit)) {
                 MatrixXd m(4,4);
                 VectorXd b(4);
@@ -1081,7 +1109,7 @@ class Polyhedron {
                     point_prime[i] = b(i);
                 }
                 bool error = distance(point,point_prime) > 0.00001;
-                if (x(0) >= 0 && x(1) >= 0 && x(2) >= 0 && x(3) > 0) {
+                if (round_float(x(0)) >= 0 && round_float(x(1)) >= 0 && round_float(x(2)) >= 0 && x(3) > 0) {
                     std::array<double,3> p;
                     for (int i = 0; i < 3; i++) {
                         p[i] = x(0)*triangle[0][i]+x(1)*triangle[1][i]+x(2)*triangle[2][i];
@@ -1453,8 +1481,8 @@ class Polyhedron {
         return false;
     }
     static bool circuit_overlap(set<vector<std::array<double,3>>> circuits1, set<vector<std::array<double,3>>> circuits2) {
-        vector<std::array<double,3>>* circuit1 = Polyhedron::circuit_cut(circuits1);
-        vector<std::array<double,3>>* circuit2 = Polyhedron::circuit_cut(circuits2);
+        vector<std::array<double,3>>* circuit1 = Polyhedron::circuit_cut(make_clockwise(circuits1));
+        vector<std::array<double,3>>* circuit2 = Polyhedron::circuit_cut(make_clockwise(circuits2));
         for (int i = 0; i < circuit1->size(); i++) {
             for (int j = 0; j < circuit2->size(); j++) {
                 std::array<double,3>* point = Polyhedron::intersect_segments({(*circuit1)[(i-1+circuit1->size())%circuit1->size()], (*circuit1)[i]},{(*circuit2)[(j-1+circuit2->size())%circuit2->size()], (*circuit2)[j]});
@@ -1471,7 +1499,7 @@ class Polyhedron {
         return false;
     }
     std::array<double,3> project_on_face_plane(int face_index, std::array<double,3> point) {
-        vector<std::array<double,3>>* circuit = circuit_cut(this->circuits(face_index));
+        vector<std::array<double,3>>* circuit = circuit_cut(make_clockwise(this->circuits(face_index)));
         std::array<double,3> vec1;
         for (int i = 0; i < 3; i++) {
             vec1[i] = (*circuit)[1][i]-(*circuit)[0][i];
@@ -1686,7 +1714,7 @@ class Polyhedron {
                         }
                     }
                     bool any = false;
-                    vector<std::array<double,3>>* circuit = circuit_cut(other_poly.circuits(face_index2));
+                    vector<std::array<double,3>>* circuit = circuit_cut(make_clockwise(other_poly.circuits(face_index2)));
                     for (const std::array<std::array<double,3>,3>& triangle : triangulate(*circuit)) {
                         if (Polyhedron::inside_triangle(triangle, p)) {
                             any = true;

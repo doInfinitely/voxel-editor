@@ -374,12 +374,6 @@ class Polyhedron:
                 else:
                     remainder = [x for k,x in enumerate(circuit) if k != i]
                     remainder = [x for k,x in enumerate(remainder) if x != remainder[k-1]]
-                    k = 0
-                    while k < len(remainder):
-                        if Polyhedron.colinear([remainder[k-1], remainder[k], remainder[(k+1)%len(remainder)]]):
-                            del remainder[k]
-                        else:
-                            k += 1
                     return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple(remainder)
         print('hey')
         1/0
@@ -441,7 +435,7 @@ class Polyhedron:
     def face_intersect(self, segment):
         output = []
         for face_index, face in enumerate(self.faces):
-            for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(self.circuits(face_index))):
+            for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))):
                 intersect = Polyhedron.intersect_triangle(segment, triangle)
                 if intersect:
                     #print('inter', segment, triangle, intersect)
@@ -490,7 +484,7 @@ class Polyhedron:
             #print(tuple(reversed(last_interior_intersection[3][j:])))
             #print(tuple([last_interior_intersection[1], first_exterior_intersection[1]]))
             #print(output[-1][i:])
-            output[-1] = output[-1][:i] + tuple([first_exterior_intersection[1], last_interior_intersection[1]]) + last_interior_intersection[3][j:] + last_interior_intersection[3][:j] + tuple([last_interior_intersection[1], first_exterior_intersection[1]]) + output[-1][i:]
+            output[-1] = output[-1][:i] + tuple([first_exterior_intersection[1], last_interior_intersection[1]]) + tuple(reversed(last_interior_intersection[3][j:] + last_interior_intersection[3][:j])) + tuple([last_interior_intersection[1], first_exterior_intersection[1]]) + output[-1][i:]
             output.remove(last_interior_intersection[3])
             output[-1] = list(output[-1])
             i = 1
@@ -513,7 +507,7 @@ class Polyhedron:
     def in_faces(self, point):
         output = []
         for face_index,face in enumerate(self.faces):
-            for x in Polyhedron.triangulate(Polyhedron.circuit_cut(self.circuits(face_index))):
+            for x in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))):
                 if Polyhedron.inside_triangle(x,point):
                     output.append(face_index)
                     break
@@ -525,7 +519,7 @@ class Polyhedron:
         vec = (random.random()*2-1,random.random()*2-1,random.random()*2-1)
         output = []
         for face_index,face in enumerate(self.faces):
-            circuit = Polyhedron.circuit_cut(self.circuits(face_index))
+            circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))
             for triangle in Polyhedron.triangulate(circuit):
                 triangle = list(triangle)
                 '''
@@ -545,9 +539,9 @@ class Polyhedron:
                 #print(x)
                 if round_float(x[0]) >= 0 and round_float(x[0]) <= 1 and round_float(x[1]) >= 0 and round_float(x[1]) <= 1 and round_float(x[2]) >= 0 and round_float(x[2]) <= 1 and x[3] > 0:
                     p = tuple(sum(x[j]*triangle[j][i] for j in range(3)) for i in range(3))
-                    #if Polyhedron.inside_triangle(triangle,p):
-                    output.append((x[3], p, face_index))
-                    break
+                    if Polyhedron.inside_triangle(triangle,p):
+                        output.append((x[3], p, face_index))
+                        break
                 '''
                 try:
                     solutions = Polyhedron.timed_solve(eqs, dict=True)
@@ -563,7 +557,7 @@ class Polyhedron:
                         output.append((gamma, p, face_index))
                         break
                 '''
-        #print('is_inside', output, vec)
+        print('is_inside', output, vec, point)
         return len(output)%2==1
     def round_verts(self, rounder):
         """Round vertices and clean up duplicate vertices, edges, and faces"""
@@ -866,8 +860,8 @@ class Polyhedron:
             poly.loads(f.read())
             return poly 
     def circuit_overlap(circuits1, circuits2):
-        circuit1 = Polyhedron.circuit_cut(circuits1)
-        circuit2 = Polyhedron.circuit_cut(circuits2)
+        circuit1 = Polyhedron.circuit_cut(Polyhedron.make_clockwise(circuits1))
+        circuit2 = Polyhedron.circuit_cut(Polyhedron.make_clockwise(circuits2))
         if any(Polyhedron.intersect_segments(frozenset([circuit1[i-1],x]),frozenset([circuit2[j-1],y])) for i,x in enumerate(circuit1) for j,y in enumerate(circuit2)):
             return True
         if any(Polyhedron.inside_triangle(x,y) for x in Polyhedron.triangulate(circuit1) for y in circuit2):
@@ -876,7 +870,7 @@ class Polyhedron:
             return True
         return False
     def project_on_face_plane(self, face_index, point):
-        circuit = Polyhedron.circuit_cut(self.circuits(face_index))
+        circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))
         vec1 = tuple(circuit[1][i]-circuit[0][i] for i in range(3))
         vec2 = tuple(circuit[2][i]-circuit[0][i] for i in range(3))
         vec0 = cross3D(vec1,vec2)
@@ -1228,8 +1222,8 @@ class Polyhedron:
                     return []
                 if p != p1:
                     for face_index2, face in enumerate(other_poly.faces):
-                        print(face_index2,  any(Polyhedron.inside_triangle(triangle, p) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(other_poly.circuits(face_index2)))))
-                        if face_index2 not in face_path and any(Polyhedron.inside_triangle(triangle, p) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(other_poly.circuits(face_index2)))):
+                        print(face_index2,  any(Polyhedron.inside_triangle(triangle, p) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(other_poly.circuits(face_index2))))))
+                        if face_index2 not in face_path and any(Polyhedron.inside_triangle(triangle, p) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(other_poly.circuits(face_index2))))):
                             print(path_along_faces(p, p2, face_path+[face_index2]))
                             output.extend([([p1]+x[0],x[1]) for x in path_along_faces(p, p2, face_path+[face_index2])])
                 return output
@@ -1639,7 +1633,7 @@ class Polyhedron:
                 #    continue
                 cofacial_points = set()
                 for point in points:
-                    if any(Polyhedron.inside_triangle(triangle,point) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(polys[poly_index].circuits(face_index)))):
+                    if any(Polyhedron.inside_triangle(triangle,point) for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(polys[poly_index].circuits(face_index))))):
                         cofacial_points.add(point)
                 cofacial_points = list(cofacial_points)
                 print("cofacial_points", cofacial_points)
@@ -1655,10 +1649,16 @@ class Polyhedron:
                                 for intersect in sorted(intersects):
                                     if not len(ps) or intersect[1] != ps[-1]:
                                         ps.append(intersect[1])
+                                for k, point in enumerate(ps):
+                                    if distance(point, point1) < 0.001:
+                                        ps[k] = point1
+                                    if distance(point, point2) < 0.001:
+                                        ps[k] = point2
                                 ps = [point1] + ps + [point2]
                                 for k, point in enumerate(ps[:-1]):
                                     midpoint = tuple(0.5*(point[l]+ps[k+1][l]) for l in range(3))
                                     if not p.is_inside(midpoint):
+                                        print(ps)
                                         double_break = True
                                         break
                                 if double_break:
@@ -1712,6 +1712,7 @@ class Polyhedron:
                             #if Polyhedron.find_exterior_circuit(poly.circuits(face_index)|{circuit}):
                             #    poly.faces[face_index] |= new_face
                             #    break
+                            
                         #else:
                         poly.faces.append(frozenset(new_face))
         print('after cofacial', len(poly.verts), len(poly.edges), len(poly.faces))
@@ -1744,7 +1745,7 @@ class Polyhedron:
                                     del poly.faces[face_index2]
                                     updated = True
                                     break
-                                elif sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1:
+                                elif sum(Polyhedron.point_on_segment(edge1, x) for x in edge2) == 1 and sum(Polyhedron.point_on_segment(edge2, x) for x in edge1) == 1 and len(edge1&edge2) == 0:
                                     poly.faces[face_index1] |= poly.faces[face_index2]
                                     del poly.faces[face_index2]
                                     updated = True
@@ -1755,9 +1756,8 @@ class Polyhedron:
                                     updated = True
                                     break
                             if updated:
+                                print(face1, face2)
                                 break
-                        if updated:
-                            break
                     if updated:
                         break
                 if updated:
@@ -1770,8 +1770,10 @@ class Polyhedron:
                 del poly.edges[edge_index]
             else:
                 edge_index += 1
+        print('after cofacial2', len(poly.verts), len(poly.edges), len(poly.faces))
         faces = []
         for face_index, face in enumerate(poly.faces):
+            print(frozenset(frozenset(poly.verts[index] for index in poly.edges[edge_index]) for edge_index in face))
             circuits = poly.circuits(face_index)
             circuit_sets = [{circuit} for circuit in circuits]
             index1 = 0
@@ -2142,6 +2144,9 @@ class Polyhedron:
                     new_faces.append(frozenset(face))
             else:
                 face_index += 1
+        print("New Faces:")
+        for face in new_faces:
+            print(face)
         poly = Polyhedron()
         poly.verts = list({point for face in new_faces for edge in face for point in edge})
         poly.edges = list({frozenset(poly.verts.index(point) for point in edge) for face in new_faces for edge in face})
