@@ -165,54 +165,6 @@ class Polyhedron {
         }
         return output;
     }
-    static vector<vector<int>> create_distance_matrix(const vector<std::array<double, 3>>& points, std::array<Polyhedron,2>& polys) {
-        int n = points.size();
-        vector<vector<int>> dist_matrix(n, std::vector<int>(n, 0));
-
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                if (i == j) continue;
-
-                double dist = 0.0;
-                for (int d = 0; d < 3; ++d)
-                    dist += std::pow(points[i][d] - points[j][d], 2);
-                dist = std::sqrt(dist);
-                int scaled_dist = static_cast<int>(1000.0 * dist);
-
-                std::array<double, 3> p1 = points[i];
-                std::array<double, 3> p2 = points[j];
-                bool valid = true;
-
-                for (Polyhedron& poly : polys) {
-                    vector<FaceIntersection> intersects = poly.face_intersect({p1, p2});
-                    std::vector<std::array<double, 3>> ps;
-                    for (const FaceIntersection& intersect : intersects) {
-                        if (ps.empty() || intersect.point != ps.back())
-                            ps.push_back(intersect.point);
-                    }
-
-                    ps.insert(ps.begin(), p1);
-                    ps.push_back(p2);
-
-                    for (size_t k = 0; k < ps.size() - 1; ++k) {
-                        std::array<double, 3> mid;
-                        for (int d = 0; d < 3; ++d)
-                            mid[d] = 0.5 * (ps[k][d] + ps[k + 1][d]);
-                        if (!poly.is_inside(mid)) {
-                            valid = false;
-                            break;
-                        }
-                    }
-
-                    if (!valid) break;
-                }
-
-                dist_matrix[i][j] = valid ? scaled_dist : std::numeric_limits<int>::max();
-            }
-        }
-        return dist_matrix;
-    }
-
 set<vector<std::array<double,3>>> circuits(int face_index, int start, int previous, int current, vector<std::array<double,3>> path, set<vector<std::array<double,3>>> old_circuits) {
     set<vector<std::array<double,3>>> output;
     if (current == start) {
@@ -331,7 +283,7 @@ set<vector<std::array<double,3>>> circuits(int face_index, int start, int previo
             //cout << circuit.size() << " ";
         }
         //cout << endl;
-        vector<std::array<double,3>>* exterior_circuit = Polyhedron::find_exterior_circuit(output);
+        vector<std::array<double,3>>* exterior_circuit = Polyhedron::find_exterior_circuit(make_clockwise(output));
         if (exterior_circuit != NULL) {
             set<vector<std::array<double,3>>> new_output;
             new_output.insert(*exterior_circuit);

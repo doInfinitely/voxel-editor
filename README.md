@@ -30,3 +30,10 @@ g++ -std=c++17 -I eigen/ polyhedron.cpp -o polyhedron `pkg-config --cflags --lib
 g++ -std=c++17 -I /opt/homebrew/include -L/opt/homebrew/lib -lortools test_ortools.cpp -o test_ortools
 ```
 
+```
+clang++ -O3 -Xpreprocessor -fopenmp -std=c++17 \
+  -I/opt/homebrew/include/eigen3 \
+  -I/opt/homebrew/opt/libomp/include \
+  -L/opt/homebrew/opt/libomp/lib -lomp \
+  polyhedron_parallel.cpp -o polyhedron_parallel
+```

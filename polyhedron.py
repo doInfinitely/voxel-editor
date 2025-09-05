@@ -557,7 +557,7 @@ class Polyhedron:
                         output.append((gamma, p, face_index))
                         break
                 '''
-        print('is_inside', output, vec, point)
+        #print('is_inside', output, vec, point)
         return len(output)%2==1
     def round_verts(self, rounder):
         """Round vertices and clean up duplicate vertices, edges, and faces"""

@@ -69,6 +69,7 @@ class Block:
             pygame.draw.polygon(screen, color, points)
         '''
         #print('face drawing time', time.time()-start_time)
+        '''
         min_select = tuple(min(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
         max_select = tuple(max(self.select[i],self.select[i]+self.select_size[i]) for i in range(3))
         meter = 1
@@ -193,6 +194,7 @@ class Block:
                     path = [(x[0]*1+screen_width/2,x[1]*-1+screen_height/2) for x in path]
                     color = "gray"
                     pygame.draw.polygon(screen, color, path)
+        '''
         for edge in self.poly.edges:
             p1, p2 = tuple(self.poly.verts[index] for index in edge)
             #print(p1,p2)
@@ -609,14 +611,10 @@ class Block:
                     p1 = (p1[0]*1+screen_width/2,p1[1]*-1+screen_height/2)
                     p2 = (p2[0]*1+screen_width/2,p2[1]*-1+screen_height/2)
                     pygame.draw.line(screen, (128,128,128), p1, p2)
-
     def reunit(self, unit):
-        block = Block(self.size[0], self.size[1], self.size[2], unit)
-        block.select = self.select
-        block.poly = self.poly
-        block.meters = self.meters
-        block.polygons = self.polygons
-        return block
+        self.unit = unit
+        self.select_size = [unit, unit, unit]
+        return self
     def select_by_void(self):
         if not len(self.poly.verts):
             return True
@@ -624,28 +622,9 @@ class Block:
         for point in points:
             if not self.poly.is_inside(point):
                 return True
-        for vert in self.poly.verts:
-            if self.select[0] <= vert[0] and vert[0] <= self.select[0]+self.unit and self.select[1] <= vert[1] and vert[1] <= self.select[1]+self.unit and self.select[2] <= vert[2] and vert[2] <= self.select[2]+self.unit:
+        for point in points:
+            if len(self.poly.in_faces(point)):
                 return True
-        edges = {frozenset([x,y]) for x in points for y in points if sum(z!=y[k] for k,z in enumerate(x))==1}
-        for edge1 in edges:
-            for edge2 in [frozenset(self.poly.verts[index] for index in edge) for edge in self.poly.edges]:
-                if all(Polyhedron.point_on_segment(edge1, point) for point in edge2) or all(Polyhedron.point_on_segment(edge2, point) for point in edge1):
-                    return True
-        faces = []
-        faces.extend([[(x,y,z) for y in (self.select[1],self.select[1]+self.unit) for z in (self.select[2],self.select[2]+self.unit)] for x in (self.select[0],self.select[0]+self.unit)])
-        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
-        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
-        faces.extend([[(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for z in (self.select[2],self.select[2]+self.unit)] for y in (self.select[1],self.select[1]+self.unit)])
-        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
-        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
-        faces.extend([[(x,y,z) for x in (self.select[0],self.select[0]+self.unit) for y in (self.select[1],self.select[1]+self.unit)] for z in (self.select[2],self.select[2]+self.unit)])
-        faces[-1][-1], faces[-1][-2] = faces[-1][-2], faces[-1][-1]
-        faces[-2][-1], faces[-2][-2] = faces[-2][-2], faces[-2][-1]
-        for face1 in faces:
-            for face_index, face2 in enumerate(self.poly.faces):
-                if Polyhedron.coplanar(set(face1)|{self.poly.verts[index] for edge_index in face2 for index in self.poly.edges[edge_index]}) and Polyhedron.circuit_overlap((face1,),self.poly.circuits(face_index)):
-                    return True
         return False
 
 
@@ -896,12 +875,12 @@ if __name__ == "__main__":
                     box.dump("poly2.ply")
                     if delete:
                         #block.poly = block.poly.subtract(box)
-                        subprocess.run(["./polyhedron", '--operation', 'subtract'])
+                        subprocess.run(["./polyhedron_parallel", '--operation', 'subtract'])
                         block.poly = Polyhedron.load("out.ply")
                         print('subtract')
                     else:
                         #block.poly = block.poly.add(box)
-                        subprocess.run(["./polyhedron", '--operation', 'add'])
+                        subprocess.run(["./polyhedron_parallel", '--operation', 'add'])
                         block.poly = Polyhedron.load("out.ply")
                         print('add')
                     block.poly.round_verts(lambda x: round_point_meter(x, meters))
