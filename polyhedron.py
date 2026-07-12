@@ -110,7 +110,15 @@ class Polyhedron:
             if not distance(np.dot(a, x), b) <= rtol:
                 return False
         return True
-    def coplanar(points, rtol=0.0001):
+    # FIX (Whittle, k3 defect): geometric predicate tolerance must be at
+    # least as coarse as the coordinate quantum (verts are rounded to a
+    # 0.001 lattice, displacing rotated-plane vertices up to ~0.0009 off
+    # their true plane). The old absolute 0.0001 rejected rotated faces'
+    # OWN vertices, so circuit_helper found no circuits and
+    # add_subtract_helper silently dropped whole faces (non-watertight
+    # results). 0.002 = 2x quantum, covering basis-triple displacement.
+    GEOM_TOL = 0.002
+    def coplanar(points, rtol=GEOM_TOL):
         if len(points) < 4:
             return True
         points = list(points)
@@ -146,7 +154,7 @@ class Polyhedron:
             if not distance(np.dot(a.astype('float'), x.astype('float')), b.astype('float')) <= rtol:
                 return False
         return True
-    def point_on_segment(edge, point, rtol=0.0001):
+    def point_on_segment(edge, point, rtol=GEOM_TOL):  # FIX (Whittle): was 0.0001
         p1, p2 = edge
         '''
         alpha = symbols("alpha")
@@ -162,7 +170,7 @@ class Polyhedron:
         b = np.array(list(point)+[1])
         x, res, rank, s = np.linalg.lstsq(a.astype('float'), b.astype('float'))
         #print(distance(point, tuple(x[0]*p1[i]+x[1]*p2[i] for i in range(3))), x[0]+x[1])
-        if round_float(x[0]) < 0 or round_float(x[1]) < 0 or not np.allclose(x[0]+x[1], 1, rtol=rtol) or distance(point, tuple(x[0]*p1[i]+x[1]*p2[i] for i in range(3))) > 0.0001:
+        if round_float(x[0]) < 0 or round_float(x[1]) < 0 or not np.allclose(x[0]+x[1], 1, rtol=rtol) or distance(point, tuple(x[0]*p1[i]+x[1]*p2[i] for i in range(3))) > rtol:  # FIX (Whittle): was hardcoded 0.0001
             return False
         return True
     def intersect_segments(edge1, edge2):
@@ -189,7 +197,7 @@ class Polyhedron:
                     #output.append(tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3)))
         return None
 
-    @timeout(1)
+    @timeout(int(os.environ.get('POLY_SOLVE_TIMEOUT', '10')))  # FIX (Whittle): was 1s wall-clock
     def timed_solve(*args, **kwargs):
         return solve(*args, **kwargs)
     def inside_triangle(triangle, point):
@@ -300,22 +308,46 @@ class Polyhedron:
         #print(temp)
         return output
     def make_planar(circuit):
-        vec1 = tuple(circuit[1][i]-circuit[0][i] for i in range(3))
-        vec2 = tuple(circuit[2][i]-circuit[0][i] for i in range(3))
-        vec0 = cross3D(vec1,vec2)
-        vec1 = (0,vec0[1],vec0[2])
-        vec2 = (vec0[0],0,vec0[2])
-        angles = [0,0,0]
-        try:
-            angles[0] = -math.acos(max(min(1,vec1[2]/distance(vec1)),-1))
-        except ZeroDivisionError:
-            pass
-        try:
-            angles[1] = -math.acos(max(min(1,vec2[2]/distance(vec2)),-1))
-        except ZeroDivisionError:
-            pass
-        #print(angles)
-        return tuple((x[0],x[1],0) for x in rotate(circuit, angles))
+        # FIX (Whittle): project onto an orthonormal basis (u,v) of the
+        # circuit's plane. The previous acos-derived double rotation used
+        # hardcoded angle signs that are wrong for half of all orientations;
+        # circuits whose normal lies in the YZ plane (faces of X-rotated
+        # cubes) were rotated perpendicular to XY, so dropping z collapsed
+        # them to a segment and ear-clipping failed (clip_ear's 1/0).
+        # Normal via Newell's method (robust to collinear leading verts).
+        # Its sign is canonicalized (dominant component positive) so the
+        # projected winding still tracks the circuit's orientation --
+        # is_clockwise depends on that.
+        m = len(circuit)
+        n = [0.0, 0.0, 0.0]
+        for i in range(m):
+            a, b = circuit[i], circuit[(i+1) % m]
+            n[0] += (a[1]-b[1])*(a[2]+b[2])
+            n[1] += (a[2]-b[2])*(a[0]+b[0])
+            n[2] += (a[0]-b[0])*(a[1]+b[1])
+        k = max(range(3), key=lambda i: abs(n[i]))
+        if n[k] < 0:
+            n = [-c for c in n]
+        nd = distance(n)
+        if nd == 0:
+            # zero-area circuit: nothing sensible to do; keep legacy shape
+            return tuple((x[0], x[1], 0) for x in circuit)
+        n = [c/nd for c in n]
+        # u: the circuit edge least parallel to n, orthogonalized against n
+        best, best_len = None, 0.0
+        for i in range(m):
+            e = [circuit[(i+1) % m][j]-circuit[i][j] for j in range(3)]
+            proj = sum(e[j]*n[j] for j in range(3))
+            e = [e[j]-proj*n[j] for j in range(3)]
+            l = distance(e)
+            if l > best_len:
+                best, best_len = e, l
+        u = [c/best_len for c in best]
+        v = cross3D(n, u)
+        o = circuit[0]
+        return tuple((sum((x[j]-o[j])*u[j] for j in range(3)),
+                      sum((x[j]-o[j])*v[j] for j in range(3)), 0)
+                     for x in circuit)
         '''
         p1 = (distance(circuit[0],circuit[1]),0,0)
         angle = [0,0, math.asin((circuit[1][1]-circuit[0][1])/p1[0])]
@@ -355,6 +387,12 @@ class Polyhedron:
         
     # A circuit is a representation of a Jordan Polygon
     def clip_ear(circuit):
+        # FIX (Whittle): drop consecutive duplicate points (post-rounding
+        # artifacts) before searching for an ear.
+        deduped = tuple(x for k, x in enumerate(circuit)
+                        if round_point(x) != round_point(circuit[k-1]))
+        if len(deduped) >= 3:
+            circuit = deduped
         planar = Polyhedron.make_planar(circuit)
         #print(planar)
         if not Polyhedron.is_clockwise(planar):
@@ -375,9 +413,9 @@ class Polyhedron:
                     remainder = [x for k,x in enumerate(circuit) if k != i]
                     remainder = [x for k,x in enumerate(remainder) if x != remainder[k-1]]
                     return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple(remainder)
-        print('hey')
-        1/0
-        sys.exit(1)
+        # FIX (Whittle): was print('hey'); 1/0 -- keep the failure loud but
+        # classified so harness bug reports carry the offending circuit.
+        raise ValueError(f"clip_ear: no clippable ear in circuit {circuit}")
     def triangulate(circuit):
         #print('triangulate', circuit)
         output = []
@@ -386,7 +424,8 @@ class Polyhedron:
             ear, remainder = Polyhedron.clip_ear(remainder)
             #print("ear",ear)
             output.append(ear)
-        output.append(remainder)
+        if len(remainder) == 3:  # FIX (Whittle): dedupe can shrink remainder
+            output.append(remainder)
         #print("ears", output)
         return output
     def find_exterior_circuit(circuits):
@@ -516,7 +555,11 @@ class Polyhedron:
         #print('is_inside', point)
         if in_faces_check and len(self.in_faces(point)):
             return True
-        vec = (random.random()*2-1,random.random()*2-1,random.random()*2-1)
+        # FIX (Whittle): ray direction derived deterministically from the
+        # query point (was unseeded random -- same inputs could classify
+        # differently across runs on degenerate geometry).
+        _rnd = random.Random(repr(round_point(point)))
+        vec = (_rnd.random()*2-1,_rnd.random()*2-1,_rnd.random()*2-1)
         output = []
         for face_index,face in enumerate(self.faces):
             circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))
@@ -1453,7 +1496,15 @@ class Polyhedron:
         if use_cpp:
             self.dump("poly1.ply")
             other.dump("poly2.ply")
-            subprocess.run(["./intersect_polyhedron"])
+            # FIX (Whittle, flagged addition): the binary's exit status was
+            # never checked and out.txt was never cleared, so a crashed run
+            # silently served the PREVIOUS boolean's result as this one's.
+            if os.path.exists("out.txt"):
+                os.remove("out.txt")
+            _result = subprocess.run(["./intersect_polyhedron"])
+            if _result.returncode != 0:
+                raise RuntimeError(
+                    f"intersect_polyhedron exited {_result.returncode}; refusing to read out.txt")
             blank = False
             new_poly = False
             poly_index = 0
@@ -1493,7 +1544,7 @@ class Polyhedron:
                     edge_copresent = False
                     for edge2 in other_poly.edges:
                         edge2 = frozenset(other_poly.verts[index] for index in edge2)
-                        if all(Polyhedron.point_on_segment(edge2, poly.vert[index]) for index in edge1):
+                        if all(Polyhedron.point_on_segment(edge2, poly.verts[index]) for index in edge1):  # FIX (Whittle): was poly.vert
                             edge_copresent = True
                             break
                     if not edge_copresent:

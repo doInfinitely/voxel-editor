@@ -606,48 +606,47 @@ class Polyhedron {
         return output;
     }
     static vector<std::array<double,3>> make_planar(vector<std::array<double,3>> circuit) {
-        // Calculate vec1 and vec2
-        std::array<double,3> vec1;
-        std::array<double,3> vec2;
-        for (int i = 0; i < 3; i++) {
-            vec1[i] = circuit[1][i] - circuit[0][i];
-            vec2[i] = circuit[2][i] - circuit[0][i];
+        // FIX (Whittle): orthonormal-basis projection (Newell normal,
+        // canonical sign) replacing the sign-fragile acos double rotation.
+        // Same fix as polyhedron.py make_planar; see there for rationale.
+        int m = circuit.size();
+        std::array<double,3> n = {0.0, 0.0, 0.0};
+        for (int i = 0; i < m; i++) {
+            const std::array<double,3>& a = circuit[i];
+            const std::array<double,3>& b = circuit[(i+1) % m];
+            n[0] += (a[1]-b[1])*(a[2]+b[2]);
+            n[1] += (a[2]-b[2])*(a[0]+b[0]);
+            n[2] += (a[0]-b[0])*(a[1]+b[1]);
         }
-        
-        // Calculate cross product vec0 = cross3D(vec1, vec2)
-        std::array<double,3> vec0 = cross3D(vec1, vec2);
-        
-        // Reassign vec1 and vec2
-        vec1 = {0.0, vec0[1], vec0[2]};
-        vec2 = {vec0[0], 0.0, vec0[2]};
-        
-        // Calculate angles
-        std::array<double,3> angles = {0.0, 0.0, 0.0};
-        
-        // Calculate angles[0] with zero division protection
-        double vec1_distance = distance(vec1);
-        if (vec1_distance != 0.0) {
-            double cos_val = vec1[2] / vec1_distance;
-            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
-            angles[0] = -acos(cos_val);
-        }
-        
-        // Calculate angles[1] with zero division protection  
-        double vec2_distance = distance(vec2);
-        if (vec2_distance != 0.0) {
-            double cos_val = vec2[2] / vec2_distance;
-            cos_val = max(-1.0, min(1.0, cos_val));  // Clamp to [-1, 1]
-            angles[1] = -acos(cos_val);
-        }
-        
-        // Rotate the circuit and project to 2D (set z=0)
-        vector<std::array<double,3>> rotated_circuit = rotate(circuit, angles);
+        int k = 0;
+        for (int i = 1; i < 3; i++) if (fabs(n[i]) > fabs(n[k])) k = i;
+        if (n[k] < 0) { for (int i = 0; i < 3; i++) n[i] = -n[i]; }
+        double nd = distance(n);
         vector<std::array<double,3>> result;
-        
-        for (const std::array<double,3>& point : rotated_circuit) {
-            result.push_back({point[0], point[1], 0.0});
+        if (nd == 0.0) {
+            for (const std::array<double,3>& x : circuit) result.push_back({x[0], x[1], 0.0});
+            return result;
         }
-        
+        for (int i = 0; i < 3; i++) n[i] /= nd;
+        std::array<double,3> best = {0.0, 0.0, 0.0};
+        double best_len = 0.0;
+        for (int i = 0; i < m; i++) {
+            std::array<double,3> e;
+            for (int j = 0; j < 3; j++) e[j] = circuit[(i+1)%m][j] - circuit[i][j];
+            double proj = e[0]*n[0] + e[1]*n[1] + e[2]*n[2];
+            for (int j = 0; j < 3; j++) e[j] -= proj*n[j];
+            double l = distance(e);
+            if (l > best_len) { best = e; best_len = l; }
+        }
+        std::array<double,3> u;
+        for (int i = 0; i < 3; i++) u[i] = best[i] / best_len;
+        std::array<double,3> v = cross3D(n, u);
+        const std::array<double,3>& o = circuit[0];
+        for (const std::array<double,3>& x : circuit) {
+            double du = (x[0]-o[0])*u[0] + (x[1]-o[1])*u[1] + (x[2]-o[2])*u[2];
+            double dv = (x[0]-o[0])*v[0] + (x[1]-o[1])*v[1] + (x[2]-o[2])*v[2];
+            result.push_back({du, dv, 0.0});
+        }
         return result;
     }
     static bool is_clockwise(vector<std::array<double,3>> planar) {
@@ -737,6 +736,10 @@ class Polyhedron {
             }
         }
         cout << "uhoh" << endl;
+        // FIX (Whittle): was undefined behavior (fell off non-void
+        // function); fail fast so the wrapper reports it cleanly.
+        fprintf(stderr, "clip_ear: no clippable ear\n");
+        exit(7);
     }
     static vector<std::array<std::array<double,3>,3>> triangulate(vector<std::array<double,3>> circuit) {
         vector<std::array<std::array<double,3>,3>> output;
