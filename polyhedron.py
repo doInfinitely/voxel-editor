@@ -1285,8 +1285,6 @@ class Polyhedron:
                             circuits.remove(y)
         return circuits
     def intersect(self, other, use_cpp=True):
-        if not WHITTLE_LEGACY_BOOL:
-            return _poly_from_mf(_mf_from_poly(self) ^ _mf_from_poly(other))
         def path_along_faces(p1, p2, face_path): 
             ray = other_poly.project_ray_on_face_plane(face_path[-1], (p1,p2))
             #print('ray', ray, (p1,p2), round_float((distance(ray[1],p2))), face_path)
@@ -2255,8 +2253,6 @@ class Polyhedron:
         poly.faces = [frozenset(poly.edges.index(frozenset(poly.verts.index(point) for point in edge)) for edge in face) for face in new_faces if len(face)]
         return poly
     def subtract(self, other, use_cpp=True):
-        if not WHITTLE_LEGACY_BOOL:
-            return _poly_from_mf(_mf_from_poly(self) - _mf_from_poly(other))
         new_poly = Polyhedron()
         new_poly.verts = list(self.verts)
         new_poly.edges = list(self.edges)
@@ -2265,8 +2261,6 @@ class Polyhedron:
         print(len(poly.verts), len(poly.edges), len(poly.faces))
         return Polyhedron.add_subtract_helper(poly,new_poly)
     def add(self, other, use_cpp=True):
-        if not WHITTLE_LEGACY_BOOL:
-            return _poly_from_mf(_mf_from_poly(self) + _mf_from_poly(other))
         new_poly1 = Polyhedron()
         new_poly1.verts = list(other.verts)
         new_poly1.edges = list(other.edges)
@@ -2280,143 +2274,6 @@ class Polyhedron:
         return Polyhedron.add_subtract_helper(new_poly1, new_poly2)
 
                         
-
-# ---------------------------------------------------------------------
-# FIX (Whittle, assembly rewrite): boolean kernel replaced with
-# manifold3d -- guaranteed-manifold output at any program length. The
-# legacy circuit-splicing path (which silently leaks boundary faces in
-# overlapping-union chains) is kept behind WHITTLE_LEGACY_BOOL=1.
-# ---------------------------------------------------------------------
-WHITTLE_LEGACY_BOOL = os.environ.get("WHITTLE_LEGACY_BOOL") == "1"
-if not WHITTLE_LEGACY_BOOL:
-    try:                     # no manifold3d installed -> legacy engine
-        import manifold3d as _m3_probe  # noqa: F401
-    except ImportError:
-        WHITTLE_LEGACY_BOOL = True
-
-
-def _orient_tris(verts, tris):
-    """Consistently orient a closed triangle soup: BFS over shared edges
-    (opposite half-edge rule), then flip components with negative signed
-    volume so all normals face outward."""
-    from collections import defaultdict, deque
-    ntri = len(tris)
-    edge_tris = defaultdict(list)
-    for ti, (a, b, c) in enumerate(tris):
-        for u, v in ((a, b), (b, c), (c, a)):
-            edge_tris[(min(u, v), max(u, v))].append(ti)
-    tris = [list(t) for t in tris]
-    seen = [False] * ntri
-    comp_of = [-1] * ntri
-    ncomp = 0
-    for start in range(ntri):
-        if seen[start]:
-            continue
-        comp = ncomp; ncomp += 1
-        seen[start] = True; comp_of[start] = comp
-        dq = deque([start])
-        while dq:
-            ti = dq.popleft()
-            a, b, c = tris[ti]
-            for u, v in ((a, b), (b, c), (c, a)):
-                for tj in edge_tris[(min(u, v), max(u, v))]:
-                    if tj == ti or seen[tj]:
-                        continue
-                    x, y, z = tris[tj]
-                    # neighbor must traverse the shared edge as (v, u)
-                    if (u, v) in ((x, y), (y, z), (z, x)):
-                        tris[tj] = [x, z, y]
-                    seen[tj] = True; comp_of[tj] = comp
-                    dq.append(tj)
-    # flip components with negative volume
-    vol = [0.0] * ncomp
-    V = verts
-    for ti, (a, b, c) in enumerate(tris):
-        vol[comp_of[ti]] += float(np.dot(V[a], np.cross(V[b], V[c]))) / 6.0
-    out = []
-    for ti, t in enumerate(tris):
-        out.append([t[0], t[2], t[1]] if vol[comp_of[ti]] < 0 else t)
-    return np.asarray(out, dtype=np.int64)
-
-
-def _mf_from_poly(poly):
-    import manifold3d as m3
-    cached = getattr(poly, "_mf", None)
-    if cached is not None:
-        return cached
-    vert_index = {}
-    verts_list = []
-    def vid(p):
-        if p not in vert_index:
-            vert_index[p] = len(verts_list)
-            verts_list.append(p)
-        return vert_index[p]
-    tris = []
-    # fast path: kernel-descended polys have pure-triangle faces; derive
-    # vertex triples straight from the edges (orientation is rebuilt by
-    # _orient_tris anyway). Avoids the legacy circuit machinery entirely.
-    if all(len(f) == 3 for f in poly.faces):
-        for f in poly.faces:
-            vs = set()
-            for e in f:
-                vs |= set(poly.edges[e])
-            if len(vs) == 3:
-                idx = tuple(vid(poly.verts[i]) for i in vs)
-                if len(set(idx)) == 3:
-                    tris.append(idx)
-    else:
-        for fi in range(len(poly.faces)):
-            for tri in Polyhedron._face_tris(poly.circuits(fi)):
-                idx = (vid(tri[0]), vid(tri[1]), vid(tri[2]))
-                if len(set(idx)) == 3:
-                    tris.append(idx)
-    verts = np.asarray(verts_list, dtype=np.float64)
-    tris = np.asarray(tris, dtype=np.int64)
-    a, b, c = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
-    area2 = np.linalg.norm(np.cross(b - a, c - a), axis=1)
-    tris = tris[area2 > 1e-12]
-    tris = _orient_tris(verts, tris)
-    mesh = m3.Mesh(vert_properties=verts.astype(np.float32),
-                   tri_verts=tris.astype(np.uint32))
-    man = m3.Manifold(mesh)
-    if man.status() != m3.Error.NoError:
-        raise RuntimeError(f"manifold conversion failed: {man.status()}")
-    return man
-
-
-def _poly_from_mf(man):
-    mesh = man.to_mesh()
-    v = np.asarray(mesh.vert_properties, dtype=float)[:, :3]
-    t = np.asarray(mesh.tri_verts, dtype=int)
-    p = Polyhedron()
-    p.verts = [tuple(float(x) for x in row) for row in v]
-    edge_map = {}
-    p.edges = []
-    p.faces = []
-    for tri in t:
-        if len(set(int(x) for x in tri)) < 3:
-            continue
-        face = []
-        for k in range(3):
-            e = frozenset((int(tri[k]), int(tri[(k + 1) % 3])))
-            if e not in edge_map:
-                edge_map[e] = len(p.edges)
-                p.edges.append(e)
-            face.append(edge_map[e])
-        p.faces.append(frozenset(face))
-    p._mf = man          # exact kernel object rides along; harness vert
-    return p             # quantization is display-only drift (<=0.0005)
-
-
-
-def get_ellipsoid(center=(0,0,0), radii=(1,1,1), segments=48):
-    """Kernel-native ellipsoid (tessellated sphere, scaled). Only sane on
-    the manifold kernel; the legacy path never sees curved primitives."""
-    import manifold3d as m3
-    man = (m3.Manifold.sphere(1.0, segments)
-           .scale([float(r) for r in radii])
-           .translate([float(c) for c in center]))
-    return _poly_from_mf(man)
 
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
