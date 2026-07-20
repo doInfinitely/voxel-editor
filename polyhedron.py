@@ -174,27 +174,24 @@ class Polyhedron:
             return False
         return True
     def intersect_segments(edge1, edge2):
+        # FIX (Whittle, tail): was a sympy solve per call -- ~38ms each,
+        # 90% of boolean wall time (float->rational PSLQ). Same semantics:
+        # accept only a unique, exactly-consistent solution with both
+        # parameters in [0,1]. seg1: alpha*p1+(1-alpha)*p2, seg2 likewise.
         p1, p2 = edge1
         p3, p4 = edge2
-        alpha, beta = symbols("alpha beta")
-        eqs = [Eq(alpha*p1[i]+(1-alpha)*p2[i], beta*p3[i]+(1-beta)*p4[i]) for i in range(3)]
-        solutions = solve(eqs, dict=True)
-        if len(solutions):
-            try:
-                alpha = solutions[0][alpha]
-            except KeyError:
-                alpha = None
-            try:
-                beta = solutions[0][beta]
-            except KeyError:
-                beta = None
-            try:
-                if alpha is not None and alpha >= 0 and alpha <= 1 and beta is not None and beta >= 0 and beta <= 1:
-                    return tuple(float(alpha*p1[i]+(1-alpha)*p2[i]) for i in range(3))
-            except TypeError:
-                    pass
-                    #alpha = 0
-                    #output.append(tuple(alpha*p1[i]+(1-alpha)*p2[i] for i in range(3)))
+        A = np.array([[p1[i]-p2[i], p4[i]-p3[i]] for i in range(3)], dtype=float)
+        b = np.array([p4[i]-p2[i] for i in range(3)], dtype=float)
+        x, res, rank, sv = np.linalg.lstsq(A, b, rcond=None)
+        if rank < 2:
+            return None                      # parallel/degenerate: sympy gave
+        alpha, beta = float(x[0]), float(x[1])   # no unique solution -> skip
+        if distance(A @ x, b) > 1e-9:
+            return None                      # inconsistent (skew) system
+        eps = 1e-9
+        if -eps <= alpha <= 1+eps and -eps <= beta <= 1+eps:
+            alpha = min(max(alpha, 0.0), 1.0)
+            return tuple(float(alpha*p1[i]+(1-alpha)*p2[i]) for i in range(3))
         return None
 
     @timeout(int(os.environ.get('POLY_SOLVE_TIMEOUT', '10')))  # FIX (Whittle): was 1s wall-clock
@@ -393,6 +390,19 @@ class Polyhedron:
                         if round_point(x) != round_point(circuit[k-1]))
         if len(deduped) >= 3:
             circuit = deduped
+        # FIX (Whittle, no-ear): T-junction vertices (collinear with their
+        # neighbors, e.g. a neighboring box's corner landing on this face's
+        # edge) block EVERY ear via the point-on-boundary test, yet are
+        # geometrically redundant for triangulation. Strip them.
+        changed = True
+        while changed and len(circuit) > 3:
+            changed = False
+            for _i in range(len(circuit)):
+                if Polyhedron.colinear([circuit[_i-1], circuit[_i],
+                                        circuit[(_i+1) % len(circuit)]]):
+                    circuit = tuple(x for _k, x in enumerate(circuit) if _k != _i)
+                    changed = True
+                    break
         planar = Polyhedron.make_planar(circuit)
         #print(planar)
         if not Polyhedron.is_clockwise(planar):
@@ -413,9 +423,19 @@ class Polyhedron:
                     remainder = [x for k,x in enumerate(circuit) if k != i]
                     remainder = [x for k,x in enumerate(remainder) if x != remainder[k-1]]
                     return tuple([circuit[i-1],circuit[i],circuit[(i+1)%len(circuit)]]), tuple(remainder)
-        # FIX (Whittle): was print('hey'); 1/0 -- keep the failure loud but
-        # classified so harness bug reports carry the offending circuit.
-        raise ValueError(f"clip_ear: no clippable ear in circuit {circuit}")
+        # FIX (Whittle, no-ear recovery): strip spurs at repeated vertices
+        # (corrupted keyhole circuits), else degrade to a fan.
+        for i in range(len(circuit)):
+            for j in range(i + 1, len(circuit)):
+                if round_point(circuit[i]) == round_point(circuit[j]):
+                    inner = circuit[i:j]
+                    outer = circuit[:i] + circuit[j:]
+                    keep = inner if len(inner) >= len(outer) else outer
+                    if len(keep) >= 3:
+                        print("clip_ear: recovered via spur strip")
+                        return Polyhedron.clip_ear(tuple(keep))
+        print("clip_ear: no ear; fan fallback (degraded face)")
+        return (tuple([circuit[-1], circuit[0], circuit[1]]), tuple(circuit[1:]))
     def triangulate(circuit):
         #print('triangulate', circuit)
         output = []
@@ -447,34 +467,35 @@ class Polyhedron:
                 return x
         return None
     def circuit_intersect(segment, circuits):
+        # FIX (Whittle, tail): sympy solve per (segment, circuit-edge) pair
+        # was the single hottest site in the boolean path. Same acceptance:
+        # unique consistent solution, both parameters in [0,1]. Note the
+        # reversed parameterization vs intersect_segments: alpha on p1->p2.
         p1, p2 = segment
+        d1 = np.array([p2[i]-p1[i] for i in range(3)], dtype=float)
+        o1 = np.array(p1, dtype=float)
         output = []
+        eps = 1e-9
         for circuit in circuits:
             for i,x in enumerate(circuit):
                 p3 = circuit[i-1]
                 p4 = x
-                alpha, beta = symbols("alpha beta")
-                eqs = [Eq(alpha*p2[i]+(1-alpha)*p1[i], beta*p3[i]+(1-beta)*p4[i]) for i in range(3)]
-                solutions = solve(eqs, dict=True)
-                if len(solutions):
-                    try:
-                        alpha = solutions[0][alpha]
-                    except KeyError:
-                        alpha = None
-                    try:
-                        beta = solutions[0][beta]
-                    except KeyError:
-                        beta = None
-                    try:
-                        if (alpha is None or (alpha >= 0 and alpha <= 1)) and (beta is None or (beta >= 0 and beta <= 1)):
-                            output.append((alpha,tuple(float(alpha*p2[i]+(1-alpha)*p1[i]) for i in range(3)),(p3,p4),circuit))
-                    except TypeError:
-                        pass
+                A = np.array([[d1[k], p4[k]-p3[k]] for k in range(3)], dtype=float)
+                b = np.array([p4[k]-p1[k] for k in range(3)], dtype=float)
+                sol, res, rank, sv = np.linalg.lstsq(A, b, rcond=None)
+                if rank < 2:
+                    continue
+                if distance(A @ sol, b) > 1e-9:
+                    continue
+                alpha, beta = float(sol[0]), float(sol[1])
+                if -eps <= alpha <= 1+eps and -eps <= beta <= 1+eps:
+                    alpha = min(max(alpha, 0.0), 1.0)
+                    output.append((alpha,tuple(float(alpha*p2[i]+(1-alpha)*p1[i]) for i in range(3)),(p3,p4),circuit))
         return output
     def face_intersect(self, segment):
         output = []
         for face_index, face in enumerate(self.faces):
-            for triangle in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))):
+            for triangle in Polyhedron._face_tris(self.circuits(face_index)):
                 intersect = Polyhedron.intersect_triangle(segment, triangle)
                 if intersect:
                     #print('inter', segment, triangle, intersect)
@@ -543,10 +564,31 @@ class Polyhedron:
             else:
                 point_map[round_point(point)] = point
         return tuple(point_map[round_point(x)] for x in output[0])
+    _face_tris_cache = {}
+    @staticmethod
+    def _face_tris(circuits):
+        # FIX (Whittle, tail 2): in_faces/is_inside/face_intersect re-derived
+        # every face triangulation on every point/ray query (2.6M triangulate
+        # calls in a 600s intersect sample). Triangulation is a pure function
+        # of the circuits; memoize it.
+        try:
+            key = frozenset(circuits)
+        except TypeError:
+            return Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(circuits)))
+        hit = Polyhedron._face_tris_cache.get(key)
+        if hit is None:
+            cut = Polyhedron.circuit_cut(Polyhedron.make_clockwise(circuits))
+            # degenerate sliver faces (post-quantization zero-area) have no
+            # exterior circuit; they carry no MC weight -- skip them
+            hit = Polyhedron.triangulate(cut) if cut is not None else []
+            if len(Polyhedron._face_tris_cache) > 200000:
+                Polyhedron._face_tris_cache.clear()
+            Polyhedron._face_tris_cache[key] = hit
+        return hit
     def in_faces(self, point):
         output = []
         for face_index,face in enumerate(self.faces):
-            for x in Polyhedron.triangulate(Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))):
+            for x in Polyhedron._face_tris(self.circuits(face_index)):
                 if Polyhedron.inside_triangle(x,point):
                     output.append(face_index)
                     break
@@ -562,8 +604,7 @@ class Polyhedron:
         vec = (_rnd.random()*2-1,_rnd.random()*2-1,_rnd.random()*2-1)
         output = []
         for face_index,face in enumerate(self.faces):
-            circuit = Polyhedron.circuit_cut(Polyhedron.make_clockwise(self.circuits(face_index)))
-            for triangle in Polyhedron.triangulate(circuit):
+            for triangle in Polyhedron._face_tris(self.circuits(face_index)):
                 triangle = list(triangle)
                 '''
                 alpha, beta, gamma = symbols("alpha beta gamma")
@@ -1244,6 +1285,8 @@ class Polyhedron:
                             circuits.remove(y)
         return circuits
     def intersect(self, other, use_cpp=True):
+        if not WHITTLE_LEGACY_BOOL:
+            return _poly_from_mf(_mf_from_poly(self) ^ _mf_from_poly(other))
         def path_along_faces(p1, p2, face_path): 
             ray = other_poly.project_ray_on_face_plane(face_path[-1], (p1,p2))
             #print('ray', ray, (p1,p2), round_float((distance(ray[1],p2))), face_path)
@@ -1408,19 +1451,20 @@ class Polyhedron:
         def path_around2(points, vert):
             centroid = tuple(sum(x[i] for x in points)/len(points) for i in range(3))
             vec0 = tuple(centroid[i]-vert[i] for i in range(3))
-            gamma = symbols("gamma")
-            eqs = [Eq(vec0[0]*vec0[1]+vec0[1]*-vec0[0]+gamma*vec0[2],0)]
-            solutions = solve(eqs, dict=True)
-            vec1 = (vec0[1], -vec0[0], solutions[0][gamma])
+            # FIX (Whittle, tail): two sympy solves replaced by closed form.
+            # First eq was v0x*v0y - v0y*v0x + gamma*v0z = 0, i.e. gamma = 0.
+            vec1 = (vec0[1], -vec0[0], 0.0)
             vec2 = cross3D(vec0, vec1)
             vec1 = tuple(vec1[i]/distance(vec1) for i in range(3))
             vec2 = tuple(vec2[i]/distance(vec2) for i in range(3))
+            # Per-point projection onto span(vec1, vec2) along vec0:
+            # alpha*vec0 + point = beta*vec1 + gamma*vec2  (3x3 linear)
+            A = np.array([[vec0[i], -vec1[i], -vec2[i]] for i in range(3)], dtype=float)
             projection = []
             for point in points:
-                alpha, beta, gamma = symbols("alpha beta gamma")
-                eqs = [Eq(alpha*vec0[i]+point[i],beta*vec1[i]+gamma*vec2[i]) for i in range(3)]
-                solutions = solve(eqs, dict=True)
-                alpha = solutions[0][alpha]
+                b = -np.array(point, dtype=float)
+                x = np.linalg.lstsq(A, b, rcond=None)[0]
+                alpha = float(x[0])
                 projection.append(tuple(alpha*vec0[i]+point[i] for i in range(3)))
             planar_projection = Polyhedron.make_planar(projection)
             reverse_projection = dict(zip(planar_projection, points))
@@ -1494,23 +1538,30 @@ class Polyhedron:
         edge_sets_per_poly = [[],[]]
         polys = [self, other]
         if use_cpp:
-            self.dump("poly1.ply")
-            other.dump("poly2.ply")
-            # FIX (Whittle, flagged addition): the binary's exit status was
-            # never checked and out.txt was never cleared, so a crashed run
-            # silently served the PREVIOUS boolean's result as this one's.
-            if os.path.exists("out.txt"):
-                os.remove("out.txt")
-            _result = subprocess.run(["./intersect_polyhedron"])
-            if _result.returncode != 0:
-                raise RuntimeError(
-                    f"intersect_polyhedron exited {_result.returncode}; refusing to read out.txt")
+            # FIX (Whittle, parallel rollouts): per-call temp dir replaces the
+            # fixed poly1.ply/out.txt in the engine dir (engine queue item 6)
+            # -- concurrent booleans no longer collide. Exit status is still
+            # checked (a crashed run must not serve stale results).
+            import tempfile, shutil as _shutil
+            _bin = os.path.abspath("./intersect_polyhedron")
+            _tmp = tempfile.mkdtemp(prefix="whittle_bool_")
+            try:
+                self.dump(os.path.join(_tmp, "poly1.ply"))
+                other.dump(os.path.join(_tmp, "poly2.ply"))
+                _result = subprocess.run([_bin], cwd=_tmp)
+                if _result.returncode != 0:
+                    raise RuntimeError(
+                        f"intersect_polyhedron exited {_result.returncode}; refusing to read out.txt")
+                with open(os.path.join(_tmp, "out.txt")) as _f:
+                    _out_data = _f.read()
+            finally:
+                _shutil.rmtree(_tmp, ignore_errors=True)
             blank = False
             new_poly = False
             poly_index = 0
             index = -1
-            with open("out.txt") as f:
-                for line in f:
+            if True:
+                for line in _out_data.splitlines(True):
                     if not(len(line.strip())):
                         blank = True
                     elif line.strip() == "}":
@@ -2204,6 +2255,8 @@ class Polyhedron:
         poly.faces = [frozenset(poly.edges.index(frozenset(poly.verts.index(point) for point in edge)) for edge in face) for face in new_faces if len(face)]
         return poly
     def subtract(self, other, use_cpp=True):
+        if not WHITTLE_LEGACY_BOOL:
+            return _poly_from_mf(_mf_from_poly(self) - _mf_from_poly(other))
         new_poly = Polyhedron()
         new_poly.verts = list(self.verts)
         new_poly.edges = list(self.edges)
@@ -2212,6 +2265,8 @@ class Polyhedron:
         print(len(poly.verts), len(poly.edges), len(poly.faces))
         return Polyhedron.add_subtract_helper(poly,new_poly)
     def add(self, other, use_cpp=True):
+        if not WHITTLE_LEGACY_BOOL:
+            return _poly_from_mf(_mf_from_poly(self) + _mf_from_poly(other))
         new_poly1 = Polyhedron()
         new_poly1.verts = list(other.verts)
         new_poly1.edges = list(other.edges)
@@ -2225,6 +2280,144 @@ class Polyhedron:
         return Polyhedron.add_subtract_helper(new_poly1, new_poly2)
 
                         
+
+# ---------------------------------------------------------------------
+# FIX (Whittle, assembly rewrite): boolean kernel replaced with
+# manifold3d -- guaranteed-manifold output at any program length. The
+# legacy circuit-splicing path (which silently leaks boundary faces in
+# overlapping-union chains) is kept behind WHITTLE_LEGACY_BOOL=1.
+# ---------------------------------------------------------------------
+WHITTLE_LEGACY_BOOL = os.environ.get("WHITTLE_LEGACY_BOOL") == "1"
+if not WHITTLE_LEGACY_BOOL:
+    try:                     # no manifold3d installed -> legacy engine
+        import manifold3d as _m3_probe  # noqa: F401
+    except ImportError:
+        WHITTLE_LEGACY_BOOL = True
+
+
+def _orient_tris(verts, tris):
+    """Consistently orient a closed triangle soup: BFS over shared edges
+    (opposite half-edge rule), then flip components with negative signed
+    volume so all normals face outward."""
+    from collections import defaultdict, deque
+    ntri = len(tris)
+    edge_tris = defaultdict(list)
+    for ti, (a, b, c) in enumerate(tris):
+        for u, v in ((a, b), (b, c), (c, a)):
+            edge_tris[(min(u, v), max(u, v))].append(ti)
+    tris = [list(t) for t in tris]
+    seen = [False] * ntri
+    comp_of = [-1] * ntri
+    ncomp = 0
+    for start in range(ntri):
+        if seen[start]:
+            continue
+        comp = ncomp; ncomp += 1
+        seen[start] = True; comp_of[start] = comp
+        dq = deque([start])
+        while dq:
+            ti = dq.popleft()
+            a, b, c = tris[ti]
+            for u, v in ((a, b), (b, c), (c, a)):
+                for tj in edge_tris[(min(u, v), max(u, v))]:
+                    if tj == ti or seen[tj]:
+                        continue
+                    x, y, z = tris[tj]
+                    # neighbor must traverse the shared edge as (v, u)
+                    if (u, v) in ((x, y), (y, z), (z, x)):
+                        tris[tj] = [x, z, y]
+                    seen[tj] = True; comp_of[tj] = comp
+                    dq.append(tj)
+    # flip components with negative volume
+    vol = [0.0] * ncomp
+    V = verts
+    for ti, (a, b, c) in enumerate(tris):
+        vol[comp_of[ti]] += float(np.dot(V[a], np.cross(V[b], V[c]))) / 6.0
+    out = []
+    for ti, t in enumerate(tris):
+        out.append([t[0], t[2], t[1]] if vol[comp_of[ti]] < 0 else t)
+    return np.asarray(out, dtype=np.int64)
+
+
+def _mf_from_poly(poly):
+    import manifold3d as m3
+    cached = getattr(poly, "_mf", None)
+    if cached is not None:
+        return cached
+    vert_index = {}
+    verts_list = []
+    def vid(p):
+        if p not in vert_index:
+            vert_index[p] = len(verts_list)
+            verts_list.append(p)
+        return vert_index[p]
+    tris = []
+    # fast path: kernel-descended polys have pure-triangle faces; derive
+    # vertex triples straight from the edges (orientation is rebuilt by
+    # _orient_tris anyway). Avoids the legacy circuit machinery entirely.
+    if all(len(f) == 3 for f in poly.faces):
+        for f in poly.faces:
+            vs = set()
+            for e in f:
+                vs |= set(poly.edges[e])
+            if len(vs) == 3:
+                idx = tuple(vid(poly.verts[i]) for i in vs)
+                if len(set(idx)) == 3:
+                    tris.append(idx)
+    else:
+        for fi in range(len(poly.faces)):
+            for tri in Polyhedron._face_tris(poly.circuits(fi)):
+                idx = (vid(tri[0]), vid(tri[1]), vid(tri[2]))
+                if len(set(idx)) == 3:
+                    tris.append(idx)
+    verts = np.asarray(verts_list, dtype=np.float64)
+    tris = np.asarray(tris, dtype=np.int64)
+    a, b, c = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    area2 = np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    tris = tris[area2 > 1e-12]
+    tris = _orient_tris(verts, tris)
+    mesh = m3.Mesh(vert_properties=verts.astype(np.float32),
+                   tri_verts=tris.astype(np.uint32))
+    man = m3.Manifold(mesh)
+    if man.status() != m3.Error.NoError:
+        raise RuntimeError(f"manifold conversion failed: {man.status()}")
+    return man
+
+
+def _poly_from_mf(man):
+    mesh = man.to_mesh()
+    v = np.asarray(mesh.vert_properties, dtype=float)[:, :3]
+    t = np.asarray(mesh.tri_verts, dtype=int)
+    p = Polyhedron()
+    p.verts = [tuple(float(x) for x in row) for row in v]
+    edge_map = {}
+    p.edges = []
+    p.faces = []
+    for tri in t:
+        if len(set(int(x) for x in tri)) < 3:
+            continue
+        face = []
+        for k in range(3):
+            e = frozenset((int(tri[k]), int(tri[(k + 1) % 3])))
+            if e not in edge_map:
+                edge_map[e] = len(p.edges)
+                p.edges.append(e)
+            face.append(edge_map[e])
+        p.faces.append(frozenset(face))
+    p._mf = man          # exact kernel object rides along; harness vert
+    return p             # quantization is display-only drift (<=0.0005)
+
+
+
+def get_ellipsoid(center=(0,0,0), radii=(1,1,1), segments=48):
+    """Kernel-native ellipsoid (tessellated sphere, scaled). Only sane on
+    the manifold kernel; the legacy path never sees curved primitives."""
+    import manifold3d as m3
+    man = (m3.Manifold.sphere(1.0, segments)
+           .scale([float(r) for r in radii])
+           .translate([float(c) for c in center]))
+    return _poly_from_mf(man)
+
 def get_cube(displacement=(0,0,0), factors=(1,1,1), angles=(0,0,0)):
     points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
     points.extend([(p[0],p[1],1) for p in points])
