@@ -4,8 +4,7 @@
 #include <set>
 #include <map>
 #include <algorithm>
-#include <Eigen/Core>
-#include <Eigen/Dense>
+#include "mini_eigen.h"
 #include <cstdlib>
 #include <cmath>
 #include <iostream>

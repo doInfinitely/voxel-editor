@@ -1,5 +1,6 @@
-# Builds every C++ tool in this repo. Eigen is vendored in eigen/ -- the only
-# external dependency is SDL2 (and OpenMP for polyhedron_parallel).
+# Builds every C++ tool in this repo. All compile-time dependencies are
+# vendored (mini_eigen.h for linear algebra, SDL2/ for SDL headers); the
+# only thing you need installed is the SDL2 *library* to link the editors:
 #
 #   macOS:  brew install sdl2
 #   Debian: sudo apt install libsdl2-dev
@@ -9,10 +10,8 @@
 
 CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2
-EIGEN    := -I eigen
 
-SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null || pkg-config --cflags sdl2 2>/dev/null)
-SDL_LIBS   := $(shell sdl2-config --libs   2>/dev/null || pkg-config --libs   sdl2 2>/dev/null)
+SDL_LIBS := $(shell sdl2-config --libs 2>/dev/null || pkg-config --libs sdl2 2>/dev/null)
 
 # OpenMP: GCC and Linux clang take -fopenmp directly; Apple clang needs libomp
 # (brew install libomp). Auto-detected below.
@@ -37,20 +36,20 @@ all: $(ALL)
 
 editor: voxel_editor voxel_editor3
 
-voxel_editor: voxel_editor.cpp
-	$(CXX) $(CXXFLAGS) $(EIGEN) $(SDL_CFLAGS) -o $@ $< $(SDL_LIBS)
+voxel_editor: voxel_editor.cpp mini_eigen.h
+	$(CXX) $(CXXFLAGS) -o $@ $< $(SDL_LIBS)
 
-voxel_editor3: voxel_editor3.cpp
-	$(CXX) $(CXXFLAGS) $(EIGEN) $(SDL_CFLAGS) -o $@ $< $(SDL_LIBS)
+voxel_editor3: voxel_editor3.cpp mini_eigen.h
+	$(CXX) $(CXXFLAGS) -o $@ $< $(SDL_LIBS)
 
-intersect_polyhedron: intersect_polyhedron.cpp
-	$(CXX) $(CXXFLAGS) $(EIGEN) -o $@ $<
+intersect_polyhedron: intersect_polyhedron.cpp mini_eigen.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
-polyhedron: polyhedron.cpp
-	$(CXX) $(CXXFLAGS) $(EIGEN) -o $@ $<
+polyhedron: polyhedron.cpp mini_eigen.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
-polyhedron_parallel: polyhedron_parallel.cpp
-	$(CXX) $(CXXFLAGS) $(EIGEN) $(OMP_CFLAGS) -o $@ $< $(OMP_LIBS)
+polyhedron_parallel: polyhedron_parallel.cpp mini_eigen.h
+	$(CXX) $(CXXFLAGS) $(OMP_CFLAGS) -o $@ $< $(OMP_LIBS)
 
 clean:
 	rm -f voxel_editor voxel_editor3 intersect_polyhedron polyhedron polyhedron_parallel

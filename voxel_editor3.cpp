@@ -1,12 +1,11 @@
-#include <SDL.h>
+#include "SDL2/SDL.h"
 #include <stdio.h>
 #include <string>
 #include <array>
 #include <set>
 #include <map>
 #include <algorithm>
-#include <Eigen/Core>
-#include <Eigen/Dense>
+#include "mini_eigen.h"
 #include <cstdlib>
 #include <cmath>
 #include <iostream>

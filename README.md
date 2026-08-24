@@ -6,8 +6,9 @@ in C++ and Python.
 
 ## Building
 
-Eigen is vendored in `eigen/` — the only external dependency is SDL2
-(plus OpenMP for the parallel engine).
+Every compile-time dependency is vendored, so all `.cpp` files compile
+with no include paths at all (`c++ -std=c++17 file.cpp`). The only thing
+to install is the SDL2 *library*, needed when linking the two editors:
 
 ```
 # macOS
@@ -25,7 +26,7 @@ make
 
 This builds every C++ tool:
 
-| target | what it is | needs |
+| target | what it is | links against |
 |---|---|---|
 | `voxel_editor` | SDL voxel editor, first version | SDL2 |
 | `voxel_editor3` | SDL voxel editor, current version | SDL2 |
@@ -48,5 +49,14 @@ are supporting modules; `test_polyhedron.py` exercises the engine.
 
 ## Vendored dependencies
 
-`eigen/` contains [Eigen 3.4.0](https://gitlab.com/libeigen/eigen)
-(header-only, MPL2-licensed — see `eigen/COPYING.MPL2`).
+- `mini_eigen.h` — a self-contained implementation of the slice of Eigen
+  this project uses (dynamic `MatrixXd`/`VectorXd` and column-pivoted
+  Householder QR solves on small dense systems). Drop-in compatible with
+  the Eigen spellings in the source; verified against Eigen 3.4 by fuzzing
+  (200k systems, zero accept/reject divergences at engine tolerance) and
+  by an end-to-end run of `intersect_polyhedron` producing geometrically
+  identical output.
+- `SDL2/` — the [SDL2](https://libsdl.org) 2.32.8 public headers
+  (zlib license, see `SDL2/LICENSE.txt`), so the editors compile without
+  SDL installed. Linking still uses your system's SDL2 library. The
+  GLES/EGL/opengl extension headers are omitted (not used here).
