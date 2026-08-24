@@ -1,0 +1,8 @@
+voxel_editor
+voxel_editor3
+intersect_polyhedron
+polyhedron
+polyhedron_parallel
+*.o
+*.dSYM/
+__pycache__/

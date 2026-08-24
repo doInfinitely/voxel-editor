@@ -654,6 +654,10 @@ class Polyhedron {
             }
         }
         cout << "uhoh" << endl;
+        // FIX (Whittle): was undefined behavior (fell off non-void
+        // function); fail fast rather than corrupt memory.
+        fprintf(stderr, "clip_ear: no clippable ear\n");
+        exit(7);
     }
     static vector<std::array<std::array<double,3>,3>> triangulate(vector<std::array<double,3>> circuit) {
         vector<std::array<std::array<double,3>,3>> output;

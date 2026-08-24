@@ -1,39 +1,52 @@
-To compile `voxel_editor.cpp` use
-```
-g++ -std=c++14 -I eigen/ -o voxel_editor voxel_editor.cpp `sdl2-config --cflags --libs`
-```
-or
-```
-g++ -std=c++14 -I eigen/ -o voxel_editor voxel_editor.cpp `pkg-config --cflags --libs sdl2`
-```
+# voxel-editor
 
-Eigen can be obtained from https://gitlab.com/libeigen/eigen
+An exact boundary-representation polyhedron engine (union / subtract /
+intersect over vert-edge-face structures) with SDL voxel-editor frontends,
+in C++ and Python.
 
-```
-g++ -std=c++14 -I eigen/ -o intersect_polyhedron intersect_polyhedron.cpp `pkg-config --cflags --libs sdl2`
-```
+## Building
+
+Eigen is vendored in `eigen/` — the only external dependency is SDL2
+(plus OpenMP for the parallel engine).
 
 ```
-g++ -std=c++14 -I eigen/ -I or-tools/include/ -o polyhedron polyhedron.cpp  -L ~/Code/voxel-editor/or-tools/lib -lortools `pkg-config --cflags --libs sdl2`
+# macOS
+brew install sdl2
+
+# Debian / Ubuntu
+sudo apt install libsdl2-dev
 ```
 
-```
-g++ -std=c++17 -I eigen/  -I /opt/homebrew/include -L/opt/homebrew/lib -lortools -labsl_log_internal_message -labsl_log_internal_check_op -labsl_strings -labsl_base -labsl_raw_logging_internal -labsl_log_internal_conditions polyhedron.cpp -o polyhedron
-```
+Then:
 
 ```
-g++ -std=c++17 -I eigen/ polyhedron.cpp -o polyhedron `pkg-config --cflags --libs sdl2`
-
+make
 ```
 
-```
-g++ -std=c++17 -I /opt/homebrew/include -L/opt/homebrew/lib -lortools test_ortools.cpp -o test_ortools
-```
+This builds every C++ tool:
 
-```
-clang++ -O3 -Xpreprocessor -fopenmp -std=c++17 \
-  -I/opt/homebrew/include/eigen3 \
-  -I/opt/homebrew/opt/libomp/include \
-  -L/opt/homebrew/opt/libomp/lib -lomp \
-  polyhedron_parallel.cpp -o polyhedron_parallel
-```
+| target | what it is | needs |
+|---|---|---|
+| `voxel_editor` | SDL voxel editor, first version | SDL2 |
+| `voxel_editor3` | SDL voxel editor, current version | SDL2 |
+| `intersect_polyhedron` | boolean kernel used as a subprocess by the Python engine | — |
+| `polyhedron` | standalone C++ port of the engine | — |
+| `polyhedron_parallel` | multithreaded engine | OpenMP¹ |
+
+¹ On macOS: `brew install libomp` (the Makefile finds it automatically; the
+target is skipped if OpenMP is unavailable). On Linux, GCC/Clang's built-in
+`-fopenmp` is used.
+
+`make editor` builds just the two SDL editors; `make clean` removes binaries.
+
+## Python
+
+The Python engine (`polyhedron.py`) shells out to `intersect_polyhedron`
+for boolean operations — build that target first. `voxel_editor3.py` is the
+current Python frontend; `camera.py`, `utility.py`, `view_intersects.py`
+are supporting modules; `test_polyhedron.py` exercises the engine.
+
+## Vendored dependencies
+
+`eigen/` contains [Eigen 3.4.0](https://gitlab.com/libeigen/eigen)
+(header-only, MPL2-licensed — see `eigen/COPYING.MPL2`).
