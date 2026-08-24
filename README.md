@@ -56,6 +56,10 @@ are supporting modules; `test_polyhedron.py` exercises the engine.
   (200k systems, zero accept/reject divergences at engine tolerance) and
   by an end-to-end run of `intersect_polyhedron` producing geometrically
   identical output.
+- `eigen/` — the full [Eigen 3.4.0](https://gitlab.com/libeigen/eigen)
+  headers (MPL2, see `eigen/COPYING.MPL2`), kept available for anything
+  that wants the real library; the .cpp files themselves build against
+  `mini_eigen.h`.
 - `SDL2/` — the [SDL2](https://libsdl.org) 2.32.8 public headers
   (zlib license, see `SDL2/LICENSE.txt`), so the editors compile without
   SDL installed. Linking still uses your system's SDL2 library. The
